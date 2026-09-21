@@ -1,0 +1,87 @@
+#pragma once
+
+#include <stdbool.h>
+#include <stdint.h>
+
+/* Divisors of the ESP32 PLL160M clock are exact for these values. */
+#define SENSE_PWM_TIMER_HZ          20000000U
+#define SENSE_PWM_PERIOD_TICKS      2000U
+#define SENSE_PWM_PERIOD_US         100U
+#define SENSE_SETTLE_US             5U
+#define SENSE_END_GUARD_US          2U
+#define SENSE_ADC_MIN_MV           150
+#define SENSE_WAIT_TIMEOUT_US       250U
+#define SENSE_EMA_NOMINAL_ALPHA     0.1f
+#define SENSE_NOMINAL_INTERVAL_US   1000U
+#define SENSE_PID_LOSS_TIMEOUT_US  20000U
+#define SENSE_CONTINUOUS_RATE_HZ  200000U
+/* Applied to every calibrated CS sample: tau about 11.6 us at 200 kS/s. */
+#define SENSE_CONTINUOUS_ALPHA    0.35f
+#define SENSE_DMA_FRAME_SAMPLES 200U
+#define SENSE_DMA_STALE_US 10000
+#define SENSE_DATA_VERSION 5U
+
+typedef enum {
+    CURRENT_UNINITIALIZED = 0,
+    CURRENT_VALID_ON = 1,
+    CURRENT_PWM_OFF = 2,
+    CURRENT_NO_WINDOW = 3,
+    CURRENT_ADC_FLOOR = 4,
+    CURRENT_ADC_SATURATED = 5,
+    CURRENT_ADC_ERROR = 6,
+    CURRENT_CALIBRATION_ERROR = 7,
+    CURRENT_OUTPUT_SETTLING = 8,
+    CURRENT_CONTINUOUS = 9,
+    CURRENT_DMA_OVERFLOW = 10,
+    CURRENT_BELOW_RANGE = 11,      /* Valid ON timing, value censored to 0 A. */
+    CURRENT_PHASE_UNVERIFIED = 12,
+    CURRENT_DMA_ON = 13,
+    CURRENT_DMA_BELOW_RANGE = 14,
+    CURRENT_CONTINUOUS_ZERO_ASSIGNED = 15, /* raw==0; SDK voltage retained. */
+} current_status_t;
+
+static inline bool current_sample_usable(current_status_t status)
+{
+    return status == CURRENT_VALID_ON || status == CURRENT_CONTINUOUS || status == CURRENT_BELOW_RANGE ||
+           status == CURRENT_DMA_ON || status == CURRENT_DMA_BELOW_RANGE ||
+           status == CURRENT_CONTINUOUS_ZERO_ASSIGNED;
+}
+
+typedef struct {
+    int raw;                       /* -1: no conversion attempted/succeeded */
+    float voltage;
+    float current_a;               /* Calibrated CS /2.49; not winding mean current. */
+    bool calibrated;               /* This individual voltage conversion succeeded. */
+    bool converted;
+    current_status_t status;
+    int64_t sample_time_us;         /* DMA EOF ISR timestamp, not exact aperture. */
+    uint32_t read_us;               /* Nominal block span (legacy field name). */
+    int32_t phase_us;               /* Estimated phase; -1 when unavailable/DC. */
+    float ema_a;
+    /* Arithmetic means of a complete DMA block. Calibrate each sample first;
+     * assign raw==0 to 0 V before averaging. No PWM phase selection. */
+    float adc_raw_mean;
+    float adc_voltage_mean;
+    float current_mean_a;          /* Mean CS /2.49; not winding mean current. */
+    uint32_t dma_block_samples;     /* 200 for a valid mean, 0 with NaN on error. */
+    uint32_t total_samples;
+    uint32_t overflows;
+    uint32_t accepted_samples;
+    uint32_t rejected_window;
+    uint32_t rejected_quality;
+    uint32_t generation;
+} current_sample_t;
+
+/* Validated software synchronization. Bounds deliberately
+ * cover the entire ADC API call, including scheduling and conversion delays. */
+static inline bool current_window_contains(int64_t rise_lower, int64_t rise_upper,
+                                           uint32_t on_us, int64_t begin, int64_t end)
+{
+    return rise_lower >= 0 && rise_upper >= rise_lower && end >= begin &&
+           begin >= rise_upper + SENSE_SETTLE_US &&
+           end <= rise_lower + (int64_t)on_us - SENSE_END_GUARD_US;
+}
+
+void current_sense_init(void);
+current_sample_t current_sense_read(uint32_t duty_ticks, int active_gpio,
+                                    int inactive_gpio, int64_t output_changed_us);
