@@ -93,62 +93,53 @@ int main(void)
 {
     current_sense_init();
     run(2000,249,1,1);
-    float expected=1000/2490.0f;
-    for (int i=1;i<200;i++) expected+=SENSE_CONTINUOUS_ALPHA*(.1f-expected);
-    CHECK(fabsf(latest.ema_a-expected)<1e-6f); /* All 200 samples, not one peak. */
     CHECK(latest.raw==249 && latest.accepted_samples==200);
     CHECK(latest.dma_block_samples==200);
     CHECK(fabsf(latest.adc_raw_mean-(1000+199*249)/200.0f)<1e-5f);
     CHECK(fabsf(latest.adc_voltage_mean-(1000+199*249)/200000.0f)<1e-6f);
     CHECK(fabsf(latest.current_mean_a-latest.adc_voltage_mean/2.49f)<1e-6f);
     CHECK(latest.current_mean_a>latest.current_a); /* Includes the first sample. */
-    float held=filter.value;
     run(0,149,0,1); CHECK(latest.status==CURRENT_CONTINUOUS && latest.accepted_samples==200);
-    CHECK(latest.ema_a<held && latest.current_a>0); /* No ON/OFF or floor censor. */
+    CHECK(fabsf(latest.current_mean_a-.149f/2.49f)<1e-6f); /* No ON/OFF or floor censor. */
     run(1000,150,0,1); CHECK(latest.status==CURRENT_CONTINUOUS && latest.accepted_samples==200);
     millivolts[0]=142; /* Reproduce real SDK intercept even at raw zero. */
-    held=filter.value;
     run(2000,0,0,1);
     CHECK(latest.status==CURRENT_CONTINUOUS_ZERO_ASSIGNED && latest.current_a==0);
     CHECK(fabsf(latest.voltage-.142f)<1e-6f && latest.raw==0);
     CHECK(latest.adc_raw_mean==0 && latest.adc_voltage_mean==0 && latest.current_mean_a==0);
-    CHECK(latest.ema_a>0 && latest.ema_a<held); /* Decay, not reset. */
     millivolts[1]=143;
     run(0,1,0,1); CHECK(latest.current_a>0 && latest.status==CURRENT_CONTINUOUS);
     CHECK(fabsf(latest.adc_voltage_mean-.143f)<1e-6f); /* Positive codes retain SDK calibration. */
     /* Same 100 nonzero + 100 zero samples, different order and final sample.
-     * Means must agree; per-sample EMA and last-value diagnostics need not. */
+     * Means must agree despite a different last-value diagnostic. */
     millivolts[249]=500;
     run(600,249,5,1);
     CHECK(latest.status==CURRENT_CONTINUOUS_ZERO_ASSIGNED && latest.raw==0);
     CHECK(latest.dma_block_samples==200 && fabsf(latest.adc_raw_mean-124.5f)<1e-6f);
     CHECK(fabsf(latest.adc_voltage_mean-.250f)<1e-6f);
     CHECK(fabsf(latest.current_mean_a-.250f/2.49f)<1e-6f);
-    float pulse_mean=latest.current_mean_a, pulse_ema=latest.ema_a;
+    float pulse_mean=latest.current_mean_a;
     run(600,249,6,1);
-    CHECK(fabsf(latest.current_mean_a-pulse_mean)<1e-6f && latest.ema_a>pulse_ema);
+    CHECK(fabsf(latest.current_mean_a-pulse_mean)<1e-6f);
     CHECK(latest.status==CURRENT_CONTINUOUS && latest.raw==249);
     millivolts[249]=249;
     run(2000,249,0,1);
     CHECK(fabsf(latest.current_mean_a-.1f)<1e-6f); /* No previous-block samples in mean. */
-    held=filter.value;
     run(600,249,7,1); /* One saturated sample invalidates the whole block. */
     CHECK(latest.status==CURRENT_ADC_SATURATED && latest.accepted_samples==0);
     CHECK(latest.rejected_quality==200 && latest.dma_block_samples==0);
     CHECK(isnan(latest.adc_raw_mean) && isnan(latest.adc_voltage_mean) && isnan(latest.current_mean_a));
-    CHECK(filter.value==held);
     run(2000,4095,0,1); CHECK(latest.status==CURRENT_ADC_SATURATED && isnan(latest.current_a));
-    CHECK(filter.value==held);
-    run(2000,249,2,1); CHECK(latest.status==CURRENT_ADC_ERROR && filter.value==held);
+    run(2000,249,2,1); CHECK(latest.status==CURRENT_ADC_ERROR);
     CHECK(isnan(latest.current_mean_a) && latest.dma_block_samples==0);
     run(600,249,8,1);
-    CHECK(latest.status==CURRENT_ADC_ERROR && isnan(latest.current_mean_a) && filter.value==held);
-    run(2000,249,4,1); CHECK(flushes>0 && stops>0 && starts>1 && filter.value==held);
+    CHECK(latest.status==CURRENT_ADC_ERROR && isnan(latest.current_mean_a));
+    run(2000,249,4,1); CHECK(flushes>0 && stops>0 && starts>1);
     CHECK(isnan(latest.current_mean_a) && latest.dma_block_samples==0);
     run(600,249,0,1);
     now+=SENSE_DMA_STALE_US+1;
     current_sample_t stale=current_sense_read(600,27,26,0);
     CHECK(stale.status==CURRENT_ADC_ERROR && isnan(stale.current_mean_a) && stale.dma_block_samples==0);
-    puts("PASS: DMA complete-block mean, zero assignment, per-sample EMA, saturation, loss, stale data");
+    puts("PASS: DMA complete-block mean, zero assignment, sample-order independence, saturation, loss, stale data");
     return 0;
 }

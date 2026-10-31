@@ -1,7 +1,5 @@
 import processing.serial.*;
 
-// false: mostrar solo la medida principal (media DMA en v5); no modifica el filtro del firmware.
-final boolean SHOW_EMA = true;
 // Consigna enviada por esta interfaz; NaN hasta realizar un envio serial.
 float sentPwmNormalized = Float.NaN;
 
@@ -9,7 +7,7 @@ float sentPwmNormalized = Float.NaN;
 Serial esp32;
 
 String[] ports = {};
-int selectedPort = 1;
+int selectedPort = 2;
 boolean serialConnected = false;
 boolean plotPaused = false;
 
@@ -17,9 +15,9 @@ float timeMs = 0;
 float adcRaw = 0;
 float adcVoltage = 0;
 float currentRawA = Float.NaN;
-float currentEmaA = Float.NaN;
 float currentDisplayA = Float.NaN;
 SensingInfo sensing = new SensingInfo();
+EncoderInfo encoder = new EncoderInfo();
 int directionCode = 0;
 String directionText = "STOP";
 float dutyCw = 0;
@@ -28,7 +26,7 @@ float adcSampleCount = 0;
 float pwmFrequencyHz = 0;
 float adcSampleRateHz = 0;
 float adcSampleTick = 0;
-float currentEmaAlpha = 0;
+String protocolStatus = "";
 String lastLine = "";
 String lastCommand = "";
 int lastDataMillis = 0;
@@ -42,8 +40,7 @@ final int HISTORY_SIZE = 420;
 float[] pwmHistory = new float[HISTORY_SIZE];
 float[] rawHistory = new float[HISTORY_SIZE];
 float[] voltageHistory = new float[HISTORY_SIZE];
-float[] currentRawHistory = new float[HISTORY_SIZE];
-float[] currentEmaHistory = new float[HISTORY_SIZE];
+float[] currentMeanHistory = new float[HISTORY_SIZE];
 int historyIndex = 0;
 boolean historyFilled = false;
 float currentAxisMaxA = 1.5;
@@ -184,49 +181,49 @@ void processLine(String line) {
   }
 
   String[] data = split(line, ',');
-  if (data.length < 9) {
+  lastLine = line;
+  try {
+    SensingInfo nextSensing = new SensingInfo(data);
+    EncoderInfo nextEncoder = new EncoderInfo(data);
+    timeMs = sensingFloat(data[1]);
+    adcRaw = sensingFloat(data[2]);
+    adcVoltage = sensingFloat(data[3]);
+    currentRawA = sensingFloat(data[4]);
+    directionCode = Integer.parseInt(data[5]);
+    directionText = data[6];
+    dutyCw = sensingFloat(data[7]);
+    dutyCcw = sensingFloat(data[8]);
+    adcSampleCount = sensingFloat(data[9]);
+    pwmFrequencyHz = sensingFloat(data[10]);
+    adcSampleRateHz = sensingFloat(data[11]);
+    adcSampleTick = sensingFloat(data[12]);
+    if (!Float.isFinite(timeMs) || !Float.isFinite(dutyCw) || !Float.isFinite(dutyCcw))
+      throw new IllegalArgumentException("Telemetria invalida");
+    sensing = nextSensing;
+    encoder = nextEncoder;
+  } catch (RuntimeException e) {
+    invalidateTelemetry();
     return;
   }
-
-  SensingInfo nextSensing;
-  try { nextSensing = new SensingInfo(data); } catch (RuntimeException e) { return; }
-  lastLine = line;
+  protocolStatus = "";
   lastDataMillis = millis();
-  timeMs = float(data[1]);
-  adcRaw = float(data[2]);
-  adcVoltage = float(data[3]);
-  currentRawA = float(data[4]);
-
-  if (data.length >= 14) {
-    currentEmaA = float(data[5]);
-    directionCode = int(data[6]);
-    directionText = data[7];
-    dutyCw = float(data[8]);
-    dutyCcw = float(data[9]);
-    adcSampleCount = float(data[10]);
-    pwmFrequencyHz = float(data[11]);
-    adcSampleRateHz = float(data[12]);
-    adcSampleTick = float(data[13]);
-
-    if (data.length >= 15) {
-      currentEmaAlpha = float(data[14]);
-    }
-  } else {
-    currentEmaA = currentRawA;
-    directionCode = int(data[5]);
-    directionText = data[6];
-    dutyCw = float(data[7]);
-    dutyCcw = float(data[8]);
-  }
-
-  sensing=nextSensing;
-  if (!sensing.usable(currentRawA,SHOW_EMA ? currentEmaA : currentRawA)) { currentRawA=currentEmaA=Float.NaN; sensing.valid=false; }
   currentDisplayA=sensing.primaryCurrent(currentRawA);
   updateCurrentAxis();
-
   if (!plotPaused) {
-    pushHistory(adcRaw, adcVoltage, currentDisplayA, currentEmaA);
+    pushHistory(adcRaw, adcVoltage, currentDisplayA);
   }
+}
+
+/** Descarta una trama incompatible y evita conservar medidas como si fueran actuales. */
+void invalidateTelemetry() {
+  protocolStatus = "Trama incompatible: se requiere DATA v6 completo";
+  sensing = new SensingInfo();
+  encoder = new EncoderInfo();
+  timeMs = adcRaw = adcVoltage = currentRawA = currentDisplayA = Float.NaN;
+  dutyCw = dutyCcw = adcSampleCount = pwmFrequencyHz = adcSampleRateHz = adcSampleTick = Float.NaN;
+  directionCode = 0;
+  directionText = "sin lectura";
+  if (!plotPaused) pushHistory(Float.NaN, Float.NaN, Float.NaN);
 }
 
 /** Enumera los puertos seriales y limita el indice seleccionado. */
@@ -249,6 +246,7 @@ void connectSelectedPort() {
 
   esp32 = new Serial(this, ports[selectedPort], 460800);
   sentPwmNormalized = Float.NaN;
+  encoder = new EncoderInfo();
   esp32.clear();
   esp32.bufferUntil('\n');
   serialConnected = true;
@@ -282,11 +280,10 @@ void setCommandDuty(float duty) {
 }
 
 /** Inserta corriente, voltaje y PWM enviado en el mismo buffer circular. */
-void pushHistory(float raw, float voltage, float currentRaw, float currentEma) {
+void pushHistory(float raw, float voltage, float currentMean) {
   rawHistory[historyIndex] = raw;
   voltageHistory[historyIndex] = voltage;
-  currentRawHistory[historyIndex] = currentRaw;
-  currentEmaHistory[historyIndex] = currentEma;
+  currentMeanHistory[historyIndex] = currentMean;
   pwmHistory[historyIndex] = sentPwmNormalized;
   historyIndex = (historyIndex + 1) % HISTORY_SIZE;
 
@@ -302,8 +299,7 @@ void clearHistory() {
   for (int i = 0; i < HISTORY_SIZE; i++) {
     rawHistory[i] = 0;
     voltageHistory[i] = 0;
-    currentRawHistory[i] = 0;
-    currentEmaHistory[i] = 0;
+    currentMeanHistory[i] = Float.NaN;
     pwmHistory[i] = Float.NaN;
   }
 }
@@ -311,7 +307,7 @@ void clearHistory() {
 /** Ajusta la escala de corriente segun las curvas visibles y finitas. */
 void updateCurrentAxis() {
   if (!Float.isFinite(currentDisplayA)) return;
-  float measuredMax = SHOW_EMA && Float.isFinite(currentEmaA) ? max(currentDisplayA, currentEmaA) : currentDisplayA;
+  float measuredMax = currentDisplayA;
   float targetMax = max(0.5, ceil(measuredMax * 5.0 + 1.0) / 5.0);
   currentAxisMaxA = max(currentAxisMaxA * 0.995, targetMax);
 }
@@ -323,11 +319,11 @@ void drawHeader() {
   text("ControlCurrentN20", 32, 38);
 
   int age = millis() - lastDataMillis;
-  boolean receiving = serialConnected && age < 800;
+  boolean receiving = serialConnected && age < 800 && protocolStatus.length()==0;
   fill(receiving ? color(90, 220, 160) : serialConnected ? color(255, 190, 90) : color(235, 82, 82));
   String status = receiving ? "recibiendo datos" : serialConnected ? "conectado, esperando DATA" : "sin conexion";
   textSize(14);
-  text(status, 32, 64);
+  text(protocolStatus.length()>0 ? protocolStatus : status, 32, 64);
 
   fill(170);
   text("Espacio: STOP   H/C: horario   A: antihorario   +/-: duty rapido   flechas: puerto/duty   P: pausa   X: limpiar", 32, 88);
@@ -380,6 +376,10 @@ void drawControlPanel() {
   textSize(14);
   text("Comando: " + (lastCommand.length() == 0 ? "-" : lastCommand), 32, 334);
   text("PWM objetivo: " + nf(commandDuty, 1, 2) + " %", 32, 358);
+  textSize(12);
+  text(encoder.supported ? String.format(java.util.Locale.US,"Salida ESP32: %.3f rad | %s rad/s", encoder.positionRad,
+    encoder.speedValid ? String.format(java.util.Locale.US,"%.3f",encoder.speedRadS) : "sin lectura") :
+    "Encoder SI: requiere firmware actualizado",32,380);
 }
 
 /** Presenta medidas, validez del sensado y tiempos de adquisicion. */
@@ -395,21 +395,20 @@ void drawTelemetryPanel() {
   textSize(13);
   fill(210);
   text("Tiempo: " + nf(timeMs / 1000.0, 1, 2) + " s", x, y + row);
-  text(sensing.version==5 ? "ADC medio: "+finiteCell(sensing.adcRawMean) : "ADC: " + (adcRaw>=0 ? nf(adcRaw,0,0)+" / 4095" : "sin conversion"), x, y + row * 2);
-  text(sensing.version==5 ? "V media: "+finiteCell(sensing.adcVoltageMean)+" | SDK ultimo: "+finiteCell(adcVoltage) : "V SDK: " + finiteCell(adcVoltage) + " V" + (SHOW_EMA ? " | EMA: " + (Float.isFinite(sensing.voltageEma) ? nf(sensing.voltageEma,1,3)+" V" : "--") : ""), x, y + row * 3);
+  text("ADC medio: "+finiteCell(sensing.adcRawMean), x, y + row * 2);
+  text("V media DMA: "+finiteCell(sensing.adcVoltageMean)+" V", x, y + row * 3);
   text(sensing.primaryLabel()+": " + currentText(currentDisplayA), x, y + row * 4);
-  text(SHOW_EMA ? "I EMA: " + currentText(currentEmaA) : "EMA oculto; medida principal sin cambios", x, y + row * 5);
+  text("Ultima muestra: ADC "+finiteCell(adcRaw)+" | SDK "+finiteCell(adcVoltage)+" V", x, y + row * 5);
   text(sensing.reason(), x, y + row * 6);
   text("Direccion real: " + directionText, x, y + row * 7);
   text("PWM CW / CCW: " + nf(dutyCw, 0, 2) + " / " + nf(-dutyCcw,0,2) + " %", x, y + row * 8);
   text("Nominal: PWM " + rateText(pwmFrequencyHz) + " / ADC " + rateText(adcSampleRateHz) + " Hz", x, y + row * 9);
   text("Obs. ADC " + rateText(sensing.adcHz) + " | consulta " + rateText(sensing.acquisitionHz) + " Hz", x, y + row * 10);
-  text(sensing.version>=2 ? sensing.dmaDetails() : "ADC " + rateText(sensing.adcHz) + " Hz | inicio <= " + finiteCell(sensing.phaseUs) + " us | lectura " + sensing.readUs + " us", x, y + row * 11);
+  text(sensing.dmaDetails(), x, y + row * 11);
 
-  drawBar(sensing.version==5 ? "ADC medio" : "ADC", sensing.version==5 ? sensing.adcRawMean : adcRaw, 0, 4095, 860, y + 23, 180, 18, color(80, 180, 255));
-  drawBar(sensing.version==5 ? "V media DMA" : "Voltaje", sensing.version==5 ? sensing.adcVoltageMean : adcVoltage, 0, 3.3, 860, y + 79, 180, 18, color(90, 220, 160));
+  drawBar("ADC medio", sensing.adcRawMean, 0, 4095, 860, y + 23, 180, 18, color(80, 180, 255));
+  drawBar("V media DMA", sensing.adcVoltageMean, 0, 3.3, 860, y + 79, 180, 18, color(90, 220, 160));
   drawBar(sensing.primaryLabel(), currentDisplayA, 0, currentAxisMaxA, 860, y + 135, 180, 18, color(250, 210, 100));
-  if (SHOW_EMA) drawBar("I EMA", currentEmaA, 0, currentAxisMaxA, 860, y + 163, 180, 18, color(255, 130, 105));
   drawBar("Duty CW", dutyCw, 0, 100, 860, y + 191, 180, 18, color(255, 130, 105));
 }
 
@@ -429,7 +428,7 @@ void drawBar(String label, float value, float minValue, float maxValue, float x,
   rect(x, y, barW, h, 4);
 }
 
-/** Dibuja la media de bloque v5 (ultima muestra en legacy) y opcionalmente EMA. */
+/** Dibuja la media aritmetica de cada bloque de 200 muestras calculada por ESP32. */
 void drawPlot() {
   float x = 32;
   float y = 395;
@@ -441,16 +440,13 @@ void drawPlot() {
   rect(x, y, w, h, 6);
 
   drawCurrentAxis(x, y, w, h);
-  drawHistoryLine(currentRawHistory, 0, currentAxisMaxA, x + 58, y + 16, w - 72, h - 36, color(250, 210, 100));
-  if (SHOW_EMA) drawHistoryLine(currentEmaHistory, 0, currentAxisMaxA, x + 58, y + 16, w - 72, h - 36, color(255, 130, 105));
+  drawHistoryLine(currentMeanHistory, 0, currentAxisMaxA, x + 58, y + 16, w - 72, h - 36, color(250, 210, 100));
 
   fill(220);
   textSize(14);
-  text(sensing.version>=3 ? "CS (A equivalentes)" : sensing.version>=2 ? "I muestra DMA (A)" : sensing.status==9 ? "CS continuo (A eq.)" : "Corriente ON (A)", x + 70, y + 24);
+  text("CS (A equivalentes)", x + 70, y + 24);
   fill(250, 210, 100);
-  text(sensing.version==5 ? "media DMA" : "cruda", x + 245, y + 24);
-  fill(255, 130, 105);
-  if (SHOW_EMA) text("EMA alpha/muestra=" + nf(currentEmaAlpha, 1, 6), x + 345, y + 24);
+  text("Media DMA de 200 muestras", x + 245, y + 24);
 
   clearButton.draw();
   pauseButton.draw();
@@ -747,125 +743,142 @@ class Slider {
   }
 }
 
-// DATA[32..41] describes whether the current conversion can be used.
-// Legacy frames retain their measurements, but have no validated sensing flag.
-/** Convierte un campo de telemetria y admite valores NaN. */
+// DATA v6 has exactly 59 fields; other layouts must update firmware.
 float sensingFloat(String value) {
   return value.equalsIgnoreCase("nan") ? Float.NaN : Float.parseFloat(value);
 }
 
-/** Formatea un numero finito o una celda vacia para un dato ausente. */
 String finiteCell(float value) { return Float.isFinite(value) ? Float.toString(value) : ""; }
-/** Formatea amperios o indica ausencia de lectura. */
 String currentText(float value) { return Float.isFinite(value) ? nf(value,1,4)+" A" : "sin lectura"; }
-/** Formatea una frecuencia valida o un marcador de ausencia. */
 String rateText(float value) { return Float.isFinite(value) && value>=0 ? nf(value,0,0) : "--"; }
 
-class SensingInfo {
-  boolean present, valid;
+/** Valores SI calculados por ESP32. Este decodificador no calibra ni deriva conteos.
+ * DATA[49..58] es la extension encoder v1; no se inventan angulos.
+ */
+class EncoderInfo {
+  boolean present, supported, countPresent, speedValid;
   int version;
-  long rejectedWindow, rejectedQuality;
-  boolean phaseValidated;
-  int status=-1, readUs;
+  long count, timeUs, relativeCount, speedWindowUs, countsPerOutputRev, referenceCount, referenceId;
+  double positionRad=Double.NaN, speedRadS=Double.NaN;
+  EncoderInfo() { }
+  EncoderInfo(String[] fields) {
+    if (fields.length!=59) throw new IllegalArgumentException("Encoder incompleto");
+    count=Long.parseLong(fields[25]); countPresent=true; present=true;
+    version=Integer.parseInt(fields[49]);
+    if (version!=1) return;
+    timeUs=Long.parseLong(fields[50]); relativeCount=Long.parseLong(fields[51]);
+    positionRad=Double.parseDouble(fields[52]);
+    speedRadS=fields[53].equalsIgnoreCase("nan") ? Double.NaN : Double.parseDouble(fields[53]);
+    int valid=Integer.parseInt(fields[54]);
+    speedWindowUs=Long.parseLong(fields[55]); countsPerOutputRev=Long.parseLong(fields[56]);
+    referenceCount=Long.parseLong(fields[57]); referenceId=Long.parseLong(fields[58]);
+    if (timeUs<=0 || countsPerOutputRev<=0 || referenceId<0 || !Double.isFinite(positionRad) ||
+        (valid!=0 && valid!=1) || speedWindowUs<0)
+      throw new IllegalArgumentException("Encoder invalido");
+    speedValid=valid==1;
+    if (speedValid && (!Double.isFinite(speedRadS) || speedWindowUs==0))
+      throw new IllegalArgumentException("Velocidad invalida");
+    if (!speedValid) speedRadS=Double.NaN;
+    supported=true;
+  }
+  /** Agrega campos sin duplicar los que ya contiene el CSV de escalones. */
+  void addColumns(Table table) {
+    for (String name:new String[]{"encoder_count_x4","encoder_version","encoder_time_us",
+      "encoder_relative_count_x4","output_position_rad","output_speed_rad_s","encoder_speed_valid",
+      "encoder_speed_window_us","counts_x4_per_output_rev","encoder_reference_count_x4","encoder_reference_id"})
+      if (!java.util.Arrays.asList(table.getColumnTitles()).contains(name)) table.addColumn(name);
+  }
+  /** Exporta exactamente los valores recibidos; vacio significa no disponible. */
+  void writeRow(TableRow row) {
+    row.setString("encoder_count_x4",countPresent ? Long.toString(count) : "");
+    row.setString("encoder_version",present ? Integer.toString(version) : "");
+    row.setString("encoder_time_us",supported ? Long.toString(timeUs) : "");
+    row.setString("encoder_relative_count_x4",supported ? Long.toString(relativeCount) : "");
+    row.setString("output_position_rad",finiteEncoderCell(positionRad));
+    row.setString("output_speed_rad_s",finiteEncoderCell(speedRadS));
+    row.setString("encoder_speed_valid",supported ? (speedValid ? "1" : "0") : "");
+    row.setString("encoder_speed_window_us",supported ? Long.toString(speedWindowUs) : "");
+    row.setString("counts_x4_per_output_rev",supported ? Long.toString(countsPerOutputRev) : "");
+    row.setString("encoder_reference_count_x4",supported ? Long.toString(referenceCount) : "");
+    row.setString("encoder_reference_id",supported ? Long.toString(referenceId) : "");
+  }
+}
+
+String finiteEncoderCell(double value) { return Double.isFinite(value) ? Double.toString(value) : ""; }
+
+
+class SensingInfo {
+  boolean present, valid, phaseValidated;
+  int version, status=-1, readUs, dmaBlockSamples;
   float phaseUs=Float.NaN, pwmHz=Float.NaN, acquisitionHz=Float.NaN, adcHz=Float.NaN;
-  long validCount, attempts, missed, dmaOverflows;
-  float voltageEma=Float.NaN;
-  // v5: media de las 200 conversiones del bloque; los campos legacy siguen siendo la ultima muestra.
+  long validCount, attempts, missed, dmaOverflows, rejectedWindow, rejectedQuality;
   float adcRawMean=Float.NaN, adcVoltageMean=Float.NaN, currentMeanA=Float.NaN;
-  int dmaBlockSamples;
-  /** Selecciona la media v5 sin sustituir datos invalidos por la ultima muestra. */
-  float primaryCurrent(float legacyCurrent) { return version==5 ? (valid ? currentMeanA : Float.NaN) : legacyCurrent; }
-  String primaryLabel() { return version==5 ? "I media DMA" : "I cruda"; }
+  /** La corriente de la interfaz es exclusivamente la media calculada por ESP32. */
+  float primaryCurrent(float diagnosticCurrent) { return valid ? currentMeanA : Float.NaN; }
+  String primaryLabel() { return "I media DMA"; }
   SensingInfo() { }
   SensingInfo(String[] fields) {
-    if (fields.length>32 && fields.length<42) throw new IllegalArgumentException("Diagnostico incompleto");
-    present=fields.length>=42;
-    if (!present) return;
-    valid=Integer.parseInt(fields[32])==1; status=Integer.parseInt(fields[33]);
-    readUs=Integer.parseInt(fields[34]); phaseUs=sensingFloat(fields[35]);
-    validCount=Long.parseLong(fields[36]); attempts=Long.parseLong(fields[37]); missed=Long.parseLong(fields[38]);
-    pwmHz=sensingFloat(fields[39]); acquisitionHz=sensingFloat(fields[40]); adcHz=sensingFloat(fields[41]);
-    // Unknown or contradictory states must never turn an absent reading into zero.
-    valid=valid && (status==1 || status==9 || status==11 || status==13 || status==14 || status==15);
-    if (fields.length>=44) { dmaOverflows=Long.parseLong(fields[42]); voltageEma=sensingFloat(fields[43]); }
-    if (fields.length>44 && fields.length<48) throw new IllegalArgumentException("Diagnostico DMA incompleto");
-    if (fields.length>=48) {
-      version=Integer.parseInt(fields[44]); rejectedWindow=Long.parseLong(fields[45]);
-      rejectedQuality=Long.parseLong(fields[46]); phaseValidated=Integer.parseInt(fields[47])==1;
-    }
-    if ((status==13 || status==14) && version!=2) valid=false;
-    if (status==15 && version!=4 && version!=5) valid=false;
-    if (version==5) {
-      if (fields.length>=52) {
-        adcRawMean=sensingFloat(fields[48]); adcVoltageMean=sensingFloat(fields[49]);
-        currentMeanA=sensingFloat(fields[50]); dmaBlockSamples=Integer.parseInt(fields[51]);
-      }
-      valid=valid && (status==9 || status==15) && dmaBlockSamples==200 &&
-        Float.isFinite(adcRawMean) && Float.isFinite(adcVoltageMean) && Float.isFinite(currentMeanA);
-      if (!valid) adcRawMean=adcVoltageMean=currentMeanA=Float.NaN;
-    }
+    if (fields.length!=59 || !fields[41].equals("6"))
+      throw new IllegalArgumentException("Se requiere firmware v6");
+    present=true; version=6;
+    int currentValid=Integer.parseInt(fields[30]);
+    if (currentValid!=0 && currentValid!=1) throw new IllegalArgumentException("Validez invalida");
+    valid=currentValid==1; status=Integer.parseInt(fields[31]);
+    readUs=Integer.parseInt(fields[32]); phaseUs=sensingFloat(fields[33]);
+    validCount=Long.parseLong(fields[34]); attempts=Long.parseLong(fields[35]); missed=Long.parseLong(fields[36]);
+    pwmHz=sensingFloat(fields[37]); acquisitionHz=sensingFloat(fields[38]); adcHz=sensingFloat(fields[39]);
+    dmaOverflows=Long.parseLong(fields[40]);
+    rejectedWindow=Long.parseLong(fields[42]); rejectedQuality=Long.parseLong(fields[43]);
+    phaseValidated=Integer.parseInt(fields[44])==1;
+    adcRawMean=sensingFloat(fields[45]); adcVoltageMean=sensingFloat(fields[46]);
+    currentMeanA=sensingFloat(fields[47]); dmaBlockSamples=Integer.parseInt(fields[48]);
+    valid=valid && (status==9 || status==15) && dmaBlockSamples==200 &&
+      Float.isFinite(adcRawMean) && Float.isFinite(adcVoltageMean) && Float.isFinite(currentMeanA);
+    if (!valid) adcRawMean=adcVoltageMean=currentMeanA=Float.NaN;
   }
-  /** Comprueba validez del protocolo y existencia de las medidas. */
-  boolean usable(float raw, float ema) {
-    return version==5 ? valid : (!present || valid) && Float.isFinite(raw) && Float.isFinite(ema);
-  }
-  /** Traduce el estado numerico de sensado a un mensaje legible. */
+  boolean usable(float raw) { return valid && Float.isFinite(raw); }
   String reason() {
-    if (!present) return "Sin verificar: firmware sin diagnostico";
-    if (version==5 && (status==9 || status==15)) return valid ?
+    if (!present) return "Esperando protocolo v6";
+    if (status==9 || status==15) return valid ?
       "Media CS de 200 muestras; A equivalentes sin calibrar" : "Media DMA no valida o bloque incompleto";
     switch (status) {
       case 0: return "Esperando lectura";
-      case 1: return valid ? "ON validado; pendiente calibrar corriente" : "Trama de corriente inconsistente";
-      case 15: return "Bajo rango: cero asignado; EMA conservado";
-      case 9: return "CS continuo + EMA; A equivalentes sin calibrar";
-      case 10: return version>=2 ? "Perdida DMA: datos descartados; EMA retenido" : "Desbordamiento DMA";
-      case 11: return "Bajo rango ADC: 0 A asignado; EMA conservado";
-      case 12: return "DMA: fase PWM sin validar";
-      case 13: return phaseValidated ? "DMA ON + EMA (sin calibrar)" : "DMA: 100% continuo + EMA";
-      case 14: return "DMA: bajo rango asignado a 0 A; EMA conservado";
-      case 2: return "PWM apagado: corriente no medida";
-      case 3: return version>=2 ? "Sin muestras dentro de la ventana ON util" : "Sin ventana ON suficiente";
-      case 4: return "ADC en el piso (0): corriente no resuelta";
+      case 10: return "Perdida DMA: bloque descartado";
       case 5: return "ADC saturado";
       case 6: return "Error de lectura ADC";
       case 7: return "Error de calibracion ADC";
-      case 8: return "Esperando estabilizacion del PWM";
-      default: return "Estado de corriente desconocido";
+      default: return "Estado de corriente no valido";
     }
   }
-  /** Diagnostico DMA: conteos acumulados desde el arranque; no son tramas UART. */
+  /** Resume conteos ADC acumulados; el CSV conserva los enteros completos. */
   String compactCount(long n) { return n>=1000000 ? nf(n/1000000.0f,0,1)+"M" : n>=1000 ? nf(n/1000.0f,0,1)+"k" : Long.toString(n); }
-  String dmaDetails() {
-    return (version==5 ? "Bloque "+dmaBlockSamples+" | CS " : version>=3 ? "CS " : "ON ") + compactCount(validCount) + " | fuera " + compactCount(rejectedWindow) + " | invalidas " + compactCount(rejectedQuality);
-  }
-  /** Agrega columnas de diagnostico de corriente a una tabla. */
+  String dmaDetails() { return "Bloque "+dmaBlockSamples+" | CS "+compactCount(validCount)+" | invalidas "+compactCount(rejectedQuality); }
   void addColumns(Table table) {
     for (String name:new String[]{"current_valid","current_status","current_status_text","adc_read_us","sample_phase_us",
       "current_valid_count","sample_attempt_count","sample_missed_count","pwm_frequency_observed_hz",
-      "acquisition_rate_observed_hz","adc_rate_observed_hz","dma_overflows","adc_voltage_ema","measurement_basis","sensing_version","dma_rejected_window","dma_rejected_quality","dma_phase_validated","raw_zero_assigned","adc_raw_mean","adc_voltage_mean","current_mean_a","dma_block_samples"}) table.addColumn(name);
+      "acquisition_rate_observed_hz","adc_rate_observed_hz","dma_overflows","measurement_basis","sensing_version",
+      "dma_rejected_window","dma_rejected_quality","dma_phase_validated","raw_zero_assigned","adc_raw_mean",
+      "adc_voltage_mean","current_mean_a","dma_block_samples"}) table.addColumn(name);
   }
-  /** Exporta diagnosticos conservando validez y significado de la medida. */
   void writeRow(TableRow row) {
     row.setString("dma_overflows",Long.toString(dmaOverflows));
-    row.setString("adc_voltage_ema",finiteCell(voltageEma));
-    row.setString("raw_zero_assigned",(version==4 || version==5) ? (status==15 ? "1" : "0") : "");
+    row.setString("raw_zero_assigned",status==15 ? "1" : "0");
     row.setString("sensing_version",Integer.toString(version));
-    row.setString("adc_raw_mean",version==5 ? finiteCell(adcRawMean) : "");
-    row.setString("adc_voltage_mean",version==5 ? finiteCell(adcVoltageMean) : "");
-    row.setString("current_mean_a",version==5 ? finiteCell(currentMeanA) : "");
-    row.setString("dma_block_samples",version==5 ? Integer.toString(dmaBlockSamples) : "");
-    row.setString("dma_rejected_window",version>=2 ? Long.toString(rejectedWindow) : "");
-    row.setString("dma_rejected_quality",version>=2 ? Long.toString(rejectedQuality) : "");
-    row.setString("dma_phase_validated",version>=2 ? (phaseValidated ? "1" : "0") : "");
-    row.setString("measurement_basis",version==5 ? (valid ? "dma_block_mean_CS_raw_zero_assigned" : "unavailable") : version==4 && (status==9 || status==15) ? "continuous_CS_raw_zero_assigned" : status==13 ? (phaseValidated ? "DMA_ON_samples" : "DMA_DC_100_percent") : status==14 ? "DMA_below_range_zero" : status==9 ? "continuous_CS_all_phases" : status==11 ? "ON_below_range_zero" : status==1 ? "validated_ON_current" : "unavailable");
-    row.setString("current_valid",present ? (valid ? "1" : "0") : "");
+    row.setString("adc_raw_mean",finiteCell(adcRawMean));
+    row.setString("adc_voltage_mean",finiteCell(adcVoltageMean));
+    row.setString("current_mean_a",finiteCell(currentMeanA));
+    row.setString("dma_block_samples",Integer.toString(dmaBlockSamples));
+    row.setString("dma_rejected_window",Long.toString(rejectedWindow));
+    row.setString("dma_rejected_quality",Long.toString(rejectedQuality));
+    row.setString("dma_phase_validated",phaseValidated ? "1" : "0");
+    row.setString("measurement_basis",valid ? "dma_block_mean_CS_raw_zero_assigned" : "unavailable");
+    row.setString("current_valid",valid ? "1" : "0");
     row.setString("current_status",Integer.toString(status)); row.setString("current_status_text",reason());
-    row.setString("adc_read_us",present ? Integer.toString(readUs) : "");
-    row.setString("sample_phase_us",present && phaseUs>=0 ? finiteCell(phaseUs) : "");
-    row.setString("current_valid_count",present ? Long.toString(validCount) : "");
-    row.setString("sample_attempt_count",present ? Long.toString(attempts) : "");
-    row.setString("sample_missed_count",present ? Long.toString(missed) : "");
+    row.setString("adc_read_us",Integer.toString(readUs));
+    row.setString("sample_phase_us",phaseUs>=0 ? finiteCell(phaseUs) : "");
+    row.setString("current_valid_count",Long.toString(validCount));
+    row.setString("sample_attempt_count",Long.toString(attempts));
+    row.setString("sample_missed_count",Long.toString(missed));
     row.setString("pwm_frequency_observed_hz",finiteCell(pwmHz));
     row.setString("acquisition_rate_observed_hz",finiteCell(acquisitionHz)); row.setString("adc_rate_observed_hz",finiteCell(adcHz));
   }

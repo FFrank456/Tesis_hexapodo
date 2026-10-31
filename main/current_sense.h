@@ -7,19 +7,12 @@
 #define SENSE_PWM_TIMER_HZ          20000000U
 #define SENSE_PWM_PERIOD_TICKS      2000U
 #define SENSE_PWM_PERIOD_US         100U
-#define SENSE_SETTLE_US             5U
-#define SENSE_END_GUARD_US          2U
-#define SENSE_ADC_MIN_MV           150
-#define SENSE_WAIT_TIMEOUT_US       250U
-#define SENSE_EMA_NOMINAL_ALPHA     0.1f
 #define SENSE_NOMINAL_INTERVAL_US   1000U
 #define SENSE_PID_LOSS_TIMEOUT_US  20000U
 #define SENSE_CONTINUOUS_RATE_HZ  200000U
-/* Applied to every calibrated CS sample: tau about 11.6 us at 200 kS/s. */
-#define SENSE_CONTINUOUS_ALPHA    0.35f
 #define SENSE_DMA_FRAME_SAMPLES 200U
 #define SENSE_DMA_STALE_US 10000
-#define SENSE_DATA_VERSION 5U
+#define SENSE_DATA_VERSION 6U
 
 typedef enum {
     CURRENT_UNINITIALIZED = 0,
@@ -57,7 +50,6 @@ typedef struct {
     int64_t sample_time_us;         /* DMA EOF ISR timestamp, not exact aperture. */
     uint32_t read_us;               /* Nominal block span (legacy field name). */
     int32_t phase_us;               /* Estimated phase; -1 when unavailable/DC. */
-    float ema_a;
     /* Arithmetic means of a complete DMA block. Calibrate each sample first;
      * assign raw==0 to 0 V before averaging. No PWM phase selection. */
     float adc_raw_mean;
@@ -72,16 +64,9 @@ typedef struct {
     uint32_t generation;
 } current_sample_t;
 
-/* Validated software synchronization. Bounds deliberately
- * cover the entire ADC API call, including scheduling and conversion delays. */
-static inline bool current_window_contains(int64_t rise_lower, int64_t rise_upper,
-                                           uint32_t on_us, int64_t begin, int64_t end)
-{
-    return rise_lower >= 0 && rise_upper >= rise_lower && end >= begin &&
-           begin >= rise_upper + SENSE_SETTLE_US &&
-           end <= rise_lower + (int64_t)on_us - SENSE_END_GUARD_US;
-}
-
+/* Start continuous acquisition and publish independent 200-sample block means. */
 void current_sense_init(void);
+/* Read the latest complete block; the retained PWM arguments do not gate DMA.
+ * Stale or invalid blocks expose NaN means and a zero block sample count. */
 current_sample_t current_sense_read(uint32_t duty_ticks, int active_gpio,
                                     int inactive_gpio, int64_t output_changed_us);

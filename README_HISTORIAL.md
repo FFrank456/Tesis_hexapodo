@@ -1,3 +1,17 @@
+# Historial del proyecto
+
+Este documento conserva decisiones anteriores. El estado vigente está en [README.md](README.md).
+
+- 29/09/2026: pruebas simples autorizadas en COM9 con ganancias actuales. Corriente y giro en ambos sentidos observados; posición CW dentro de tolerancia, segundo objetivo CCW no alcanzado con límite CS de 30 mA eq. Sin pérdidas DMA, final STOP confirmado. Sin flasheo. Ver docs/prueba_cascada_20260929.md.
+
+- 28/09/2026: lazo exterior de posición 6.166/3192 implementado en ESP32; referencias rad, rampa y límites, espera de inversión y llegada coast. CurrentPID incorpora Posición y CSV v3; extensiones SPEED/POSITION a 10 Hz nominales. Compilación, pruebas host/Java y revisión visual correctas. Sin flasheo ni ensayo físico. Ver docs/control_posicion_20260928.md.
+
+- 28/09/2026: ganancias MATLAB de corriente libre 8.832/80090; PI exterior de velocidad 0.0284/0.01392 y adaptación de CurrentPID. Compilado y probado en host, sin flasheo ni validación de esta cascada en planta. Ver docs/control_cascada_20260928.md.
+
+- [Estado v5 y resultados previos al retiro del filtro, 21/09/2026](docs/history/README_v5_20260921.md).
+- [Copia antigua de pruebas FuncionalTEST1, no compilada](docs/history/FuncionalTEST1_legacy.txt).
+- La revisión 6 usa únicamente la media DMA y requiere el protocolo de 59 campos.
+
 # Revision DMA con clasificador temporal (reemplazada el 15/09/2026)
 
 # ControlCurrentN20

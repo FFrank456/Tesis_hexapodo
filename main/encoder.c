@@ -1,10 +1,11 @@
 #include "encoder.h"
+#include "encoder_processing.h"
 #include "driver/pulse_cnt.h"
 #include "esp_err.h"
+#include "esp_timer.h"
 
 static pcnt_unit_handle_t unit;
-static uint32_t previous;
-static int64_t position;
+static encoder_processing_t processing;
 
 void encoder_init(void)
 {
@@ -30,18 +31,32 @@ void encoder_init(void)
     ESP_ERROR_CHECK(pcnt_unit_add_watch_point(unit, 30000));
     ESP_ERROR_CHECK(pcnt_unit_enable(unit));
     ESP_ERROR_CHECK(pcnt_unit_clear_count(unit));
+    processing = (encoder_processing_t){0};
     ESP_ERROR_CHECK(pcnt_unit_start(unit));
 }
 
-// One caller only: the sampling task. Extend the driver's accumulated count.
-int64_t encoder_read(void)
+// Read the PCNT accumulated counter. All callers hold the shared motor lock,
+// including reference-zero commands, to keep extension and history serialized.
+static uint32_t encoder_raw_count(void)
 {
     int count;
     ESP_ERROR_CHECK(pcnt_unit_get_count(unit, &count));
-    uint32_t next = (uint32_t)count;
-    uint32_t wrapped_delta = next - previous;
-    int64_t delta = wrapped_delta <= INT32_MAX ? (int64_t)wrapped_delta : (int64_t)wrapped_delta - 4294967296LL;
-    position += ENCODER_SIGN * delta;
-    previous = next;
-    return position;
+    return (uint32_t)count;
+}
+
+int64_t encoder_read(void)
+{
+    return encoder_processing_extend(&processing, encoder_raw_count());
+}
+
+encoder_sample_t encoder_sample(void)
+{
+    const uint32_t raw = encoder_raw_count();
+    const int64_t now_us = esp_timer_get_time();
+    return encoder_processing_sample(&processing, raw, now_us);
+}
+
+void encoder_zero_reference(void)
+{
+    encoder_processing_zero(&processing, encoder_raw_count());
 }

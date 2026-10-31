@@ -1,5 +1,4 @@
 #include "current_sense.h"
-#include "current_ema.h"
 #include <math.h>
 #include <string.h>
 #ifndef CURRENT_SENSE_HOST_TEST
@@ -29,9 +28,8 @@ static int millivolts[4096]; /* SDK conversion once at startup, not 200k calls/s
 static bool calibrated;
 static portMUX_TYPE lock = portMUX_INITIALIZER_UNLOCKED;
 static current_sample_t latest = {.raw=-1, .voltage=NAN, .current_a=NAN,
-    .ema_a=NAN, .adc_raw_mean=NAN, .adc_voltage_mean=NAN, .current_mean_a=NAN,
+    .adc_raw_mean=NAN, .adc_voltage_mean=NAN, .current_mean_a=NAN,
     .phase_us=-1, .status=CURRENT_UNINITIALIZED};
-static current_ema_t filter;
 static uint32_t overflows;
 
 /* Metadata is paired FIFO with the driver's DMA frames. A lost entry makes the
@@ -58,26 +56,25 @@ static bool IRAM_ATTR overflow_cb(adc_continuous_handle_t h,
 
 static current_sample_t empty_sample(current_status_t status)
 {
-    return (current_sample_t){.raw=-1, .voltage=NAN, .current_a=NAN, .ema_a=NAN,
+    return (current_sample_t){.raw=-1, .voltage=NAN, .current_a=NAN,
         .adc_raw_mean=NAN, .adc_voltage_mean=NAN, .current_mean_a=NAN,
         .phase_us=-1, .status=status, .sample_time_us=esp_timer_get_time(),
         .calibrated=calibrated};
 }
 
-/* Invalidate published measurements without erasing the diagnostic SDK voltage
- * or the internal EMA memory. A partial/stale block is never a valid mean. */
+/* Invalidate published measurements while preserving the diagnostic SDK voltage.
+ * A partial/stale block is never a valid mean. */
 static void invalidate_measurement(current_sample_t *s)
 {
     s->current_a=NAN;
-    s->ema_a=NAN;
     s->adc_raw_mean=NAN;
     s->adc_voltage_mean=NAN;
     s->current_mean_a=NAN;
     s->dma_block_samples=0;
 }
 
-/* This task owns calibration lookup, counters, block means and EMA updates.
- * PWM does not gate acquisition or filtering. EOF is a block receipt timestamp. */
+/* This task owns calibration lookup, counters and complete-block arithmetic means.
+ * PWM does not gate acquisition. EOF is a block receipt timestamp. */
 static void adc_task(void *arg)
 {
     (void)arg;
@@ -95,7 +92,6 @@ static void adc_task(void *arg)
             xQueueReset(frames);
             portENTER_CRITICAL(&lock); seen_overflows=overflows; portEXIT_CRITICAL(&lock);
             s.status=CURRENT_DMA_OVERFLOW;
-            /* Keep EMA memory, but never display that old value as fresh data. */
             ESP_ERROR_CHECK(adc_continuous_start(adc));
         } else if (xQueueReceive(frames, &m, pdMS_TO_TICKS(20)) == pdTRUE) {
             uint32_t bytes=0;
@@ -105,10 +101,6 @@ static void adc_task(void *arg)
                 s.status=CURRENT_DMA_OVERFLOW;
             } else {
                 bool fresh=esp_timer_get_time()-m.eof_us <= SENSE_DMA_STALE_US;
-                current_ema_t candidate;
-                portENTER_CRITICAL(&lock);
-                candidate=filter;
-                portEXIT_CRITICAL(&lock);
                 uint32_t block_accepted=0, block_window=0, block_quality=0;
                 uint32_t raw_sum=0, processed_mv_sum=0;
                 s.status=CURRENT_CONTINUOUS;
@@ -133,15 +125,14 @@ static void adc_task(void *arg)
                         block_quality++;
                         continue;
                     }
-                    /* Censor only code zero, before EMA; preserve SDK voltage
+                    /* Assign only code zero to 0 V before averaging; preserve SDK voltage
                      * in diagnostics. This is an assignment, not calibration. */
                     float amps=raw==0 ? 0.0f : mv/2490.0f;
                     raw_sum+=(uint32_t)raw;
                     processed_mv_sum+=raw==0 ? 0U : (uint32_t)mv;
-                    current_ema_push(&candidate, amps, SENSE_CONTINUOUS_ALPHA);
                     block_accepted++;
                     s.raw=raw; s.voltage=mv/1000.0f; s.current_a=amps;
-                    s.ema_a=candidate.value; s.phase_us=-1;
+                    s.phase_us=-1;
                     s.status=raw==0 ? CURRENT_CONTINUOUS_ZERO_ASSIGNED : CURRENT_CONTINUOUS;
                 }
                 if (!calibrated) s.status=CURRENT_CALIBRATION_ERROR;
@@ -153,7 +144,6 @@ static void adc_task(void *arg)
                     if (overflows!=seen_overflows) s.status=CURRENT_DMA_OVERFLOW;
                     else if (malformed || !fresh) s.status=CURRENT_ADC_ERROR;
                 } else if (block_accepted==SENSE_DMA_FRAME_SAMPLES) {
-                    filter=candidate;
                     s.adc_raw_mean=(float)raw_sum/SENSE_DMA_FRAME_SAMPLES;
                     s.adc_voltage_mean=(float)processed_mv_sum/(1000.0f*SENSE_DMA_FRAME_SAMPLES);
                     s.current_mean_a=s.adc_voltage_mean/2.49f;

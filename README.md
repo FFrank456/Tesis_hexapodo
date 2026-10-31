@@ -1,30 +1,95 @@
-<!-- Estado de la revisión 5: promedio de bloques DMA; pendiente de flash y validación física. -->
 # ControlCurrentN20
 
-## Estado actual
+**Prueba en placa — 29/09/2026:** corriente 10/20 mA eq., velocidad ±1 rad/s y dos objetivos de posición ensayados por COM9. El primer objetivo de posición alcanzó la banda; el segundo quedó inmóvil con referencia CS limitada a 30 mA eq. También se observó exceso de velocidad respecto a la referencia pequeña. Sin pérdidas DMA, final STOP confirmado. Es una comprobación parcial, no validación general de la sintonía. [Resultados y estado final](docs/prueba_cascada_20260929.md).
 
-**La revisión 5 calcula internamente el promedio de cada bloque DMA de 200 muestras y lo presenta como medida principal en Processing.** Mantiene PWM de 10 kHz, ADC continuo de 200 kS/s y el EMA adicional de alpha 0.35 por muestra. No hay selección ni sincronización ON/OFF. Esta revisión está preparada en el código; su flash y validación física siguen pendientes. La última comprobación física documentada corresponde a la versión 4, en STOP, el 18/09/2026.
+## Estado actual — 28/09/2026
 
-El proyecto funciona como banco de ensayos en lazo abierto. El lazo PID permanece bloqueado hasta validar el sensado y la temporización. No hay un modelo dinámico validado ni un controlador sintonizado para la planta.
+**Posición implementada:** PI exterior **Kp=6.166, Ki=3192, Kd=0**, en cascada con velocidad y corriente. CurrentPID añade pestaña Posición, gráficas en rad/rad/s y CSV común v3. Límites iniciales: 2 rad/s, rampa de referencia 5 rad/s² y tolerancia 0.02 rad; inversión automática con espera de detención y llegada en coast vigilado. Compilado y probado en software, pendiente de validar estabilidad y desempeño en planta. [Activación, límites, protocolo y verificación](docs/control_posicion_20260928.md).
 
-### Conexiones y mando
+**Revisión 6: corriente representada únicamente por el promedio aritmético de cada bloque DMA de 200 muestras.** Se retiraron el filtro EMA, sus parámetros, estado, cálculos, campos seriales, curvas y columnas de los nuevos CSV. Se mantienen PWM de 10 kHz y ADC continuo de 200 kS/s, sin selección ON/OFF.
+
+El ESP32 también procesa el encoder y transmite posición en rad y velocidad en rad/s. Los tres Processing visualizan las medidas recibidas; no convierten conteos ni calculan velocidades.
+
+**El usuario se encarga del flasheo.** Esta revisión requiere cargar el firmware nuevo y usar los Processing actualizados. No se ha accionado el motor ni flasheado la placa durante la activación del PI. Los ensayos anteriores en lazo abierto no validan el nuevo controlador.
+
+Se actualizaron las ganancias del PI de corriente a las de MATLAB para eje libre: **Kp=8.832, Ki=80090 y Kd=0**. Se implementó el PI exterior de velocidad: **Kp=0.0284, Ki=0.01392**, también del PDF de MATLAB. El arranque conserva modo OPEN, PWM cero y referencias cero. El PI interior regula CS media equivalente, no una medida calibrada de torque. La nueva cascada está compilada y probada en host; **no está validada en la planta**. La prueba histórica siguiente corresponde a las ganancias anteriores (504.9 / 7462).
+
+**Prueba preliminar por serial del 23/09/2026:** en CW, con PWM máximo 40 %, siguió referencias de 10 y 20 mA equivalentes. A 40 mA quedó limitado por el techo PWM y sostuvo 29.85 mA; al bajar a 20 mA reguló 19.83 mA con el eje girando. Sin pérdidas DMA ni salida inesperada de PI. Terminó en STOP, referencia y PWM cero. Ganancias confirmadas por telemetría; no se flasheó. La placa tenía inicialmente otras ganancias, por lo que el protocolo v6 por sí solo no certifica el binario cargado. Véase el [informe y registros del ensayo PI](build-codex/pi-trial-20260923-205551.md). Sigue pendiente la validación con osciloscopio y en otros puntos de operación.
+
+## Control PI habilitado
+
+El cálculo está en [current_pi.h](main/current_pi.h) y su integración en [main.c](main/main.c). Kp está en puntos porcentuales PWM/A equivalente y Ki en puntos porcentuales PWM/(A equivalente·s). Se conserva el nombre `PID` en los comandos y la telemetría v6 de 59 campos, por compatibilidad.
+
+- Realimentación: `current_mean_a`, media de las 200 muestras DMA, sin filtro adicional.
+- Integración con el tiempo real entre bloques nuevos; una lectura repetida no vuelve a integrar. El control consulta el último bloque disponible: no garantiza procesar todos los bloques ni una frecuencia fija de 1 kHz. Las consultas observadas anteriormente rondaban 500–600 Hz; deben medirse de nuevo con el PI.
+- Salida limitada, antiwindup condicional y transferencia desde PWM manual del mismo sentido conservando inicialmente la salida. Para invertir el sentido se requiere STOP.
+- Una medida inválida, pérdida DMA o intervalo sin actualización de al menos 20 ms provoca STOP. La adquisición también invalida datos antiguos. Esto no sustituye una protección independiente contra sobrecorriente.
+- Referencia admitida: 0–1 A equivalente CS. Este rango limita la consigna, no garantiza limitar la corriente física a 1 A. Referencia cero manda coast y borra el integrador.
+
+En CurrentPID, **Enviar PI** envía las ganancias y el límite PWM mostrado. **Enviar ref** envía la referencia y habilita PI si estaba en OPEN; cambiarla durante el control conserva el integrador. El botón **PI** también aplica antes el límite mostrado (40 % inicial). El firmware por sí solo inicia con límite máximo 100 %; las órdenes seriales directas deben configurar el límite deseado mediante `LIMIT,0,maximo`.
+
+Comandos disponibles: `PID,8.832,80090,0`, `LIMIT,0,40`, `IREF,valor_en_A_equivalentes`, `MODE,PID,CW` (o CCW), y `STOP`. Las ganancias están incorporadas como valores iniciales. Solo se admite Kd cero y parámetros numéricos finitos. STOP vuelve a OPEN y PWM cero; conserva las consignas almacenadas y borra ambos integradores.
+
+## Cascada de velocidad implementada
+
+`referencia rad/s -> PI velocidad -> referencia A eq. CS -> PI corriente -> PWM -> motor`
+
+El firmware ejecuta ambos PI. Processing no calcula control ni velocidad. **ControlCurrentN20_CurrentPID** presenta pestañas **Corriente** y **Velocidad** que solo cambian la vista. **Aplicar referencia / activar** envía la referencia y activa el modo elegido; **Ajustes y diagnóstico** contiene ganancias y PWM manual. Las gráficas ocupan la mayor parte de la ventana. Al pasar de SPEED a PID se borra la referencia interior antes de aceptar una referencia manual.
+
+- Velocidad de salida en rad/s, con ventana del encoder de 50 ms ya existente. El PI exterior se actualiza al disponer de al menos 10 ms nuevos del reloj del encoder; integra con el intervalo real. No se promete periodicidad exacta. Un hueco de 50 ms o feedback marcado inválido provoca STOP. Un encoder desconectado que siga reportando cero válido no se distingue de un eje quieto solo con esta prueba de validez.
+- La referencia de velocidad es una **magnitud 0–32 rad/s**, con sentido separado CW/CCW. Se compara con velocidad medida proyectada en ese sentido. La gráfica conserva la velocidad firmada y presenta la referencia con el signo correspondiente.
+- El PI exterior entrega entre cero y `ILIMIT` A equivalentes CS, inicialmente **0.100 A eq.**. El comando admite un máximo de 1 A eq.; limita la referencia, no constituye protección de corriente física. Processing mantiene el techo inicial **40 % PWM**, editable; el arranque del firmware mantiene techo interno 100 % hasta recibir LIMIT.
+- Ambos PI tienen antiwindup condicional. Además, el exterior detiene la acumulación positiva si el PI interior está en el techo PWM con error de corriente positivo. Bajar ILIMIT recorta la referencia y ajusta el integrador exterior solo si estaba por encima del nuevo límite.
+- No se manda corriente negativa ni frenado activo. Si el PI pide esfuerzo negativo se aplica cero/coast; la desaceleración depende de la planta. `WREF,0` manda coast inmediatamente y borra ambos integradores. Para invertir: STOP, esperar a que se detenga el eje y seleccionar el otro sentido. La activación SPEED rechaza giro opuesto medido mayor de 0.5 rad/s.
+- Se mantiene la parada por problemas de la media DMA del PI interior. La estabilidad de las ganancias continuas al discretizarlas debe comprobarse en planta; las pruebas host verifican implementación, no márgenes de estabilidad físicos.
+
+Nuevos comandos, además de los anteriores:
+
+| Comando | Acción |
+|---|---|
+| `SPI,0.0284,0.01392` | Ganancias del PI exterior |
+| `ILIMIT,0.1` | Máxima referencia de corriente generada por velocidad, A eq. |
+| `WREF,5` | Referencia de velocidad de magnitud 5 rad/s |
+| `MODE,SPEED,CW` | Activar cascada, con ambas medidas válidas |
+| `MODE,SPEED,CCW` | Activar cascada en sentido contrario, desde eje detenido |
+| `STOP` | OPEN, PWM cero y reinicio de ambos PI |
+
+Durante SPEED, `IREF` se rechaza: la referencia interior pertenece al PI exterior. Los valores de referencia/ganancias no se guardan en flash; al reiniciar vuelven los valores iniciales. El envío de referencia durante el mismo modo no reinicia el PI. Todos los comandos numéricos de CurrentPID usan punto decimal independientemente del idioma de Windows.
+
+**Telemetría:** DATA v6 conserva los 59 campos a 100 Hz nominales; los modos añaden `SPEED` (código 2) y `POSITION` (código 3). SPEED y POSITION se envían como extensiones independientes a 10 Hz nominales cada una. La primera amplía el diagnóstico de velocidad:
+
+```text
+SPEED,1,encoder_time_us,direction_sign,reference_magnitude_rad_s,error_rad_s,current_reference_a_eq,kp,ki,integral_a_eq,current_limit_a_eq,limited,control_time_us
+```
+
+Los otros Processing ignoran esta extensión. CurrentPID exige una trama SPEED v1 reciente para activar velocidad, grafica corriente y velocidad, y exporta estas variables junto con DATA. Cada fila conserva los timestamps de origen de SPEED: la extensión se mantiene entre recepciones, **no es una adquisición independiente a 100 Hz**. Las ganancias de corriente se conservan por muestra; `pwm_limit_max_percent` registra el último techo confirmado mediante `ACK,LIMIT`, y queda desconocido tras reconexión/reinicio hasta recibir otra confirmación.
+
+La interfaz muestra los últimos 20 s y conserva hasta 60000 muestras para exportar (aproximadamente 10 min a 100 Hz). Al llenarse avisa, conserva las filas antiguas y sigue mostrando la planta en vivo. **Nuevo registro** borra la captura: exportar antes si se desea conservarla. El CSV v3 es común a corriente, velocidad y posición; conserva la telemetría, modo, unidades, referencia/medida/error genéricos, segmento temporal y métricas, y añade campos de posición. Se escribe en segundo plano por lotes, sin construir una tabla completa de diez minutos en memoria.
+
+Indicadores: RMSE, error absoluto medio, error absoluto máximo y porcentaje de tiempo de PWM en el techo confirmado. Usan hasta 5 s de muestras válidas del modo/segmento actual, ponderadas por tiempo del ESP32; se excluyen huecos mayores de 100 ms y medidas inválidas. La cobertura válida se muestra junto a los indicadores. Son estadísticas de telemetría, no una medida exacta de todos los ciclos del control ni una certificación de estabilidad. Ver [interfaz y contrato CSV v2](docs/processing_dashboard_csv_v2.md).
+
+Origen y límites del diseño: [revisión de MATLAB/Simulink](matlab/revision_cascada_20260927.md). Se implementan corriente y velocidad; posición sigue pendiente de corregir y validar la cascada del modelo. [Verificación de esta implementación](docs/control_cascada_20260928.md).
+
+## Configuración
 
 | Elemento | Configuración |
 |---|---|
 | Driver | DRV8876, PMODE=1: avance/coast y reversa/coast |
-| PWM horario / antihorario | GPIO27 / GPIO26; mando firmado de -100 a +100 % |
-| PWM | 10 kHz nominales; reloj de 20 MHz y período de 2000 ticks |
-| CS al ADC | GPIO32, ADC1_CH4; 12 bits y atenuación de 12 dB |
-| Encoder A/B | GPIO18 / GPIO19; conteo x4, antes de la reductora 100:1 |
+| PWM horario / antihorario | GPIO27 / GPIO26; consigna firmada de -100 a +100 % |
+| PWM | 10 kHz; reloj de 20 MHz y período de 2000 ticks |
+| CS al ADC | GPIO32, ADC1_CH4; 12 bits, atenuación de 12 dB |
+| Adquisición | DMA continuo, 200000 muestras/s; 200 muestras por bloque |
+| Encoder A/B | GPIO18 / GPIO19, PCNT x4 |
+| Encoder mecánico | 7 pulsos/vuelta/canal, reductora 100:1; 2800 conteos/vuelta de salida |
 | Serial | 460800 baudios; telemetría nominal de 100 Hz |
 
-En cada sentido se aplica PWM a una entrada del puente y se mantiene la otra en cero. STOP coloca ambas entradas en cero: coast. El encoder funciona después de reconectarlo; faltan los conteos por vuelta para convertir a RPM, por lo que los ensayos se expresan en conteos x4/s.
+En cada sentido se aplica PWM a una entrada del puente y se mantiene la otra en cero. STOP coloca ambas entradas en cero: coast.
 
-## Promedio de bloques DMA: revisión 5
+## Medida de corriente
 
-La adquisición recibe 200 muestras cada 1 ms nominal: 5 us entre conversiones, aproximadamente 20 muestras por período PWM y diez períodos por bloque. Todas las muestras del bloque intervienen, incluidas ON, OFF y STOP. Un cambio de PWM puede quedar dentro de un bloque: el promedio representa ese intervalo completo.
+La adquisición recibe un bloque cada 1 ms nominal: 5 us entre conversiones, aproximadamente 20 muestras por período PWM y diez períodos por bloque. Todas las muestras del bloque intervienen, incluidas ON, OFF y STOP.
 
-Cada código ADC se convierte individualmente mediante la tabla de 4096 voltajes obtenida con line-fitting del SDK. Se calcula:
+Cada código se convierte mediante la tabla de voltajes calibrados del SDK:
 
 ```text
 V_procesado[k] = 0                       si raw[k] == 0
@@ -35,110 +100,86 @@ adc_voltage_mean = suma(V_procesado[k]) / 200
 current_mean_a   = adc_voltage_mean / 2.49
 ```
 
-La media se calcula después de convertir cada muestra: no se convierte solamente el código ADC promedio. `adc_raw_mean` es un diagnóstico en cuentas ADC; `adc_voltage_mean` está en voltios y `current_mean_a` en amperios equivalentes de CS.
+La conversión se aplica a cada muestra antes de promediar. No hay filtro recursivo ni memoria entre bloques. Cada promedio utiliza exclusivamente las 200 muestras de su bloque; un cambio de PWM puede quedar dentro de ese intervalo.
 
-La asignación de cero para `raw==0` se hace antes del promedio y del EMA. El voltaje SDK de la última muestra se conserva como diagnóstico en `adc_voltage`; puede ser 0.142 V aunque su contribución procesada sea cero. No se resta 0.142 V a todos los códigos. Los códigos positivos conservan su calibración, incluso por debajo de 150 mV. Esta regla no recupera información bajo el rango útil del ADC ni demuestra corriente física nula.
+El voltaje SDK de la última muestra se conserva como diagnóstico en `adc_voltage`; puede ser 0.142 V con raw cero aunque su contribución al promedio sea cero. No se resta 0.142 V a los códigos positivos. La asignación de cero no recupera información bajo el rango útil del ADC ni demuestra corriente física nula.
 
-Solo un bloque completo válido publica la media. Saturación, error de calibración, datos mal formados, antigüedad excesiva o pérdida DMA invalidan el bloque: las medias se publican como `NaN` y `dma_block_samples=0`. No se entrega un promedio parcial como si representara las 200 muestras. La invalidez queda explícita en estado y calidad. Las pérdidas DMA limpian y reinician las colas y provocan STOP desde la tarea de control.
+Solo un bloque completo válido publica sus medias. Saturación, error de calibración, datos mal formados, antigüedad excesiva o pérdida DMA producen medias NaN y `dma_block_samples=0`. Processing muestra huecos y no reutiliza una medida antigua como válida. Las pérdidas DMA reinician las colas y provocan STOP desde la tarea de control.
 
-**Esta revisión calcula una media aritmética de CS, no extremos ni una reconstrucción trapezoidal por pulso.** No calcula fase, área por ON, pendiente, mínimo/máximo de pulso ni una captura rápida de la forma de onda. Tampoco aplica un filtro de amplitud que elimine automáticamente los picos de conmutación.
+`current_mean_a` representa **CS promedio escalado con 2.49 V/A**. La calibración ADC y la ganancia física CS/corriente siguen pendientes. En avance/coast, IPROPI no observa toda la corriente de recirculación: esta magnitud no equivale automáticamente a la corriente media del devanado ni al torque. Referencia: [DRV8876, sección 7.3.3.1](https://www.ti.com/lit/ds/symlink/drv8876.pdf).
 
-### EMA adicional
+El cálculo de bloques es interno, nominalmente a 1 kHz. La telemetría a 100 Hz envía el último resumen: **no transmite las 200 muestras ni registra todos los bloques de 1 ms**. No debe confundirse la tasa ADC, la consulta de medidas y la frecuencia del CSV.
 
-Se conserva el filtro sobre cada muestra válida:
+## Encoder calculado en ESP32
+
+Los parámetros están en [encoder.h](main/encoder.h), el cálculo en [encoder_processing.h](main/encoder_processing.h) y la lectura PCNT en [encoder.c](main/encoder.c).
 
 ```text
-y[k] = y[k-1] + 0.35 * (x[k] - y[k-1])
+Conteos/vuelta del motor = 7 * 4 = 28
+Conteos/vuelta de salida = 28 * 100 = 2800
+Posición [rad] = (conteo - referencia) * 2*pi / 2800
+Velocidad [rad/s] = delta_conteos * 2*pi / (2800 * delta_t_s)
 ```
 
-La primera muestra válida inicializa el filtro. Los cambios de PWM, sentido, STOP y los errores no reinician su memoria; durante una invalidez no se presenta el valor antiguo como una medida fresca. La media de bloque y el EMA son señales distintas: la media es la salida principal de la revisión 5 y el EMA continúa como diagnóstico adicional.
+El factor x4 ya incluye ambos canales. Se conserva el signo, la posición puede superar una vuelta y el contador se extiende a 64 bits. Las diferencias se calculan como enteros antes de convertirlas a radianes.
 
-A 200 kS/s, alpha 0.35 equivale a una constante de tiempo aproximada de 11.6 us. Por ello, el último valor EMA de un bloque puede conservar rizado de la portadora; no equivale al promedio de las 200 muestras ni a aplicar el EMA a 1 kHz.
+La velocidad usa una ventana móvil de al menos 50 ms, con su duración real en `encoder_speed_window_us`. La lectura PCNT lleva su propio `encoder_time_us`, independiente del tiempo del bloque ADC y del puerto serial. Sin ventana suficiente se transmite NaN y `encoder_speed_valid=0`; un hueco superior a 100 ms reinicia el historial. Esta ventana introduce retardo que debe considerarse al identificar la planta.
 
-### Alcance físico de la medida
+Cada `SEQ` establece la referencia de posición antes del primer escalón. El botón **Cero encoder ESP32** envía `ENCODER,ZERO`, confirmado por `ACK,ENCODER,ZERO`. Cambiar la referencia no borra el conteo absoluto ni el historial de velocidad. El comando se rechaza durante una secuencia activa. StepExperiment interrumpe la captura si cambia `encoder_reference_id` durante el ensayo.
 
-La salida es **CS promedio**, escalada con una ganancia supuesta de 2.49 V/A. No es automáticamente corriente media del devanado o torque. Durante coast, IPROPI no observa toda la corriente de recirculación; promediar los intervalos observados y OFF no recupera esa corriente. Referencia: [DRV8876, sección 7.3.3.1](https://www.ti.com/lit/ds/symlink/drv8876.pdf).
+Los CSV guardan rad y rad/s exactamente como llegan del ESP32. Para identificar posición/velocidad debe usarse `encoder_time_us`; `sample_time_us` corresponde al bloque de corriente.
 
-Quedan pendientes la calibración de voltaje ADC con referencias conocidas y la validación de la ganancia V/A con una referencia de corriente adecuada. Para comparar con el osciloscopio debe usarse la media de CS sobre una ventana comparable, preferentemente un número entero de períodos PWM; la media ON, el pico, RMS y una instantánea EMA representan magnitudes diferentes.
+## Processing y protocolo serial v6
 
-## Processing y protocolo serial
+Los tres sketches requieren **DATA de 59 campos**, contando `DATA` como índice cero, y `sensing_version=6`. Las tramas antiguas o incompletas se rechazan con un aviso. Se eliminaron tres campos respecto a v5, por lo que cambiaron los índices; debe actualizarse firmware y visualizador conjuntamente.
 
-Los tres sketches usan la media de bloque como medida principal cuando reciben `sensing_version=5`, y conservan el EMA y los diagnósticos. Admiten registros anteriores sin reinterpretar sus instantáneas como promedios de bloque; un firmware anterior no proporciona los nuevos campos.
-
-La trama `DATA` conserva sus primeros 48 campos e incorpora cuatro al final: **52 campos en total**, contando `DATA` como índice cero. La versión de sensado sigue en el índice 44.
-
-| Índice | Campo añadido | Significado |
+| Índice | Campo | Significado |
 |---|---|---|
-| 48 | `adc_raw_mean` | Media de las 200 cuentas ADC; diagnóstico |
-| 49 | `adc_voltage_mean` | Media de voltajes calibrados individualmente, asignando cero a raw cero, en V |
-| 50 | `current_mean_a` | `adc_voltage_mean / 2.49`, en A equivalentes de CS |
-| 51 | `dma_block_samples` | 200 si la media corresponde a un bloque válido; 0 si es inválido |
+| 1 | `time_ms` | Tiempo del bloque de corriente en ms |
+| 2–4 | `adc_raw`, `adc_voltage`, `current_raw_a` | Última muestra del bloque, solo diagnóstico |
+| 10–11 | `pwm_frequency_hz`, `adc_sample_rate_hz` | Frecuencias nominales PWM y ADC |
+| 18 | `duty_percent` | PWM firmado aplicado |
+| 24 | `sample_time_us` | Recepción ISR del bloque ADC; no apertura exacta |
+| 25 | `encoder_count` | Conteo absoluto x4 |
+| 26–29 | Campos de secuencia | Identificador, etapa, inicio y comienzo de etapa |
+| 30–31 | `current_valid`, `current_status` | Validez y estado del bloque |
+| 37–39 | Tasas observadas | PWM, consulta y conversiones ADC |
+| 40 | `dma_overflows` | Pérdidas DMA acumuladas |
+| 41 | `sensing_version` | 6 |
+| 42–44 | Descartes y fase | Descartes por ventana/calidad y validación de fase |
+| 45 | `adc_raw_mean` | Media de cuentas ADC |
+| 46 | `adc_voltage_mean` | Media de voltajes procesados, V |
+| 47 | `current_mean_a` | Medida principal: media CS / 2.49, A equivalentes |
+| 48 | `dma_block_samples` | 200 válido; 0 inválido |
+| 49 | `encoder_version` | 1 |
+| 50 | `encoder_time_us` | Tiempo de lectura PCNT |
+| 51 | `encoder_relative_count_x4` | Conteo relativo firmado |
+| 52 | `output_position_rad` | Posición relativa de salida, rad |
+| 53 | `output_speed_rad_s` | Velocidad firmada de salida, rad/s |
+| 54–55 | Validez y ventana de velocidad | 0/1 y duración real en us |
+| 56 | `counts_x4_per_output_rev` | 2800 |
+| 57–58 | Referencia del encoder | Conteo absoluto de origen e identificador |
 
-Para un bloque inválido, los tres promedios son `NaN`. Los campos anteriores conservan su significado:
+La línea `HEADER` describe todos los campos en su orden exacto. Estado 9 o 15 y `current_valid=1` indican bloque procesado válido; no certifican calibración física. Estado 15 identifica cero asignado en la última muestra y no implica que todo el bloque sea cero. No se utiliza fase PWM: `sample_phase_us=-1`, `dma_phase_validated=0` y `dma_rejected_window=0`.
 
-- `current_raw_a`: última muestra procesada del bloque dividida por 2.49. No es el promedio nuevo.
-- `current_ema_a` y `adc_voltage_ema`: estado del EMA al final del bloque, en A equivalentes y V respectivamente.
-- Estado 9 o 15 y `current_valid=1`: dato procesado válido; no certifica calibración física del devanado. El estado 15 describe cero asignado en la muestra correspondiente y no permite deducir que todas las muestras del bloque sean cero.
-- `current_valid_count`: conversiones aceptadas. Los descartes de calidad se contabilizan en `dma_rejected_quality`; `dma_rejected_window=0`, porque no hay ventanas ON/OFF.
-- `adc_sample_rate_hz=200000`, `current_ema_alpha=0.35`, `sample_phase_us=-1` y `dma_phase_validated=0`: la fase no se utiliza.
-- `sample_time_us`: recepción ISR del bloque, no instante exacto de apertura del ADC. `adc_read_us=1000` representa la duración nominal del bloque.
+- [Processing manual](processing/ControlCurrentN20_Processing4/ControlCurrentN20_Processing4.pde): control PWM, media DMA de corriente y gráfica del PWM enviado de 0 a 1.
+- [CurrentPID](processing/ControlCurrentN20_CurrentPID/ControlCurrentN20_CurrentPID.pde): corriente, velocidad y posición en cascada; gráficas, métricas y CSV v3. Ganancias iniciales de corriente 8.832/80090, velocidad 0.0284/0.01392 y posición 6.166/3192; Kd=0.
+- [StepExperiment](processing/ControlCurrentN20_StepExperiment/ControlCurrentN20_StepExperiment.pde): secuencia 0→100→0 %, pasos de 5 % cada segundo; 41 etapas, máximo 48 y 120 s. Gráficas de corriente media, PWM y velocidad recibida; CSV con medias DMA y encoder SI.
 
-**El cálculo de bloques es interno, nominalmente a 1 kHz. La telemetría a 100 Hz envía el último resumen disponible; no registra todos los promedios de 1 ms ni transmite las 200 muestras.** Sus tiempos y tasas deben distinguirse de la tarea que consulta las instantáneas. El CSV de Processing incorpora los campos nuevos y mantiene los huecos en medidas ausentes. No permite reconstruir la forma de onda de 10 kHz ni recuperar los bloques no enviados.
+## Verificación y uso
 
-- [Processing manual](processing/ControlCurrentN20_Processing4/ControlCurrentN20_Processing4.pde): campo numérico PWM, deslizador y gráfica `abs(PWM)/100` de 0 a 1. `SHOW_EMA=false` oculta el filtro en pantalla, no lo desactiva en firmware.
-- [Processing CurrentPID](processing/ControlCurrentN20_CurrentPID/ControlCurrentN20_CurrentPID.pde): interfaz disponible; el firmware sigue rechazando activar PID.
-- [StepExperiment](processing/ControlCurrentN20_StepExperiment/ControlCurrentN20_StepExperiment.pde): ejemplo 0..100..0 %, pasos de 5 % cada segundo, ejecutado por ESP32; 41 etapas, límite de 48 etapas y 120 s.
+Binario generado en `build-codex/ControlCurrentN20.bin`. La activación PI se documenta en [verificación PI](build-codex/pi-activation-20260923.md); la [verificación v6](build-codex/dma-mean-v6-verification.md) corresponde a la etapa anterior de sensado sin controlador habilitado.
 
-## Verificación física y pendientes
+Después del flasheo a cargo del usuario:
 
-La revisión 5 aún necesita flash y prueba física. Los ensayos descritos a continuación son de versiones anteriores y no validan el nuevo promedio.
+1. Abrir uno de los Processing actualizados y conectar a 460800 baudios.
+2. Confirmar recepción v6, ADC cercano a 200 kS/s, PWM cercano a 10 kHz y ausencia de pérdidas.
+3. Comparar `adc_voltage_mean` con Mean de CS en el osciloscopio, con escala de sonda y acoplamiento DC correctos y ventanas equivalentes.
+4. Comprobar 2800 conteos y 2*pi rad por vuelta de salida, signo y velocidad.
+5. Validar calibración y temporización antes de identificar la planta y habilitar el lazo.
 
-Verificación de esta revisión: firmware compilado con ESP-IDF 5.4.4 (`build-codex/build-dma-mean.log`), tres sketches Processing compilados y pruebas C/Java aprobadas. Las pruebas comprueban media de las 200 muestras, asignación de cero, independencia del orden para la media, rechazo del bloque completo ante saturación, datos antiguos y pérdida DMA; también selección de la media v5, compatibilidad anterior y exportación CSV. Binario generado: `build-codex/ControlCurrentN20.bin`. No se flasheó ni se accionó el motor durante esta actualización.
+## Registros anteriores
 
-La [comprobación del 18/09/2026](build-codex/integration-preflight-20260918-183939.txt) registró versión 4 en STOP, ADC alrededor de 200 kS/s, consulta alrededor de 1 kHz, sin pérdidas DMA registradas. Raw cero se mostraba como corriente procesada cero mientras el diagnóstico SDK conservaba 0.142 V. No se ejecutó un barrido de carga en esa comprobación. Ese resultado en STOP no descarta los descensos anteriores de consulta hacia 700 Hz bajo otros ensayos: la temporización sigue necesitando verificación durante movimiento.
+El [ensayo del 21/09/2026](processing/ControlCurrentN20_StepExperiment/exports/multistep_20260921_093322.csv) corresponde a v5: 4100 registros, bloques válidos de 200 muestras y ningún desbordamiento registrado. La [comparación al 40 %](build-codex/dma-mean-active40-20260918-215537.md) obtuvo 63.51 mV del ESP32 frente a 60.56 mV del osciloscopio en ventanas no simultáneas; es una comprobación preliminar.
 
-Pendientes:
-
-1. Flashear y comprobar medias v5 frente al osciloscopio, con factores de sonda/canal y acoplamiento DC confirmados.
-2. Validar código ADC frente a voltajes DC conocidos y ganancia física CS frente a corriente de referencia.
-3. Verificar tasas, calidad y latencia durante los escalones; distinguir adquisición DMA, consulta y telemetría.
-4. Calibrar conteos por vuelta del encoder y diseñar un registro adecuado para identificar la dinámica, sin asumir que el CSV de 100 Hz contiene toda la información de 1 kHz.
-5. Identificar y validar el modelo antes de habilitar y sintonizar el lazo de corriente.
-
-Código: [adquisición](main/current_sense.c), [parámetros](main/current_sense.h). Las estrategias anteriores, incluidos oneshot y ventanas de muestreo, están en el [historial](README_HISTORIAL.md) y no describen el firmware actual.
-
-## Ensayos anteriores: contexto y resultados
-
-Los informes previos al tratamiento de raw cero conservaron una base SDK de 0.142 V, equivalente a 0.057 A bajo la conversión utilizada entonces. Ese tratamiento fue sustituido en v4 por cero asignado antes del EMA. Asimismo, el encoder 0..1 de los primeros ensayos se debió a que estaba desconectado, según confirmó el usuario; ya no se considera un fallo pendiente de PCNT. Informes históricos: [prueba DMA inicial](build-codex/dma-serial-probe-20260915-102838-analysis.md), [EMA alpha 0.1 antes de v4](build-codex/ema01-probe-20260915-104848-analysis.md) e [historial del proyecto](README_HISTORIAL.md).
-
-### Barridos iniciales v4: 82 etapas
-
-[Informe y capturas seriales](build-codex/many-pwm-v4-analysis.md). Barridos 0..100..0 % y 0..-100..0 %, en pasos de 5 %, un segundo por etapa y STOP entre ambos. Incluidos los reposos: 9206 tramas y 18.408 millones de conversiones procesadas/aceptadas, sin desbordamientos DMA ni descartes.
-
-El ADC se mantuvo alrededor de 200 kS/s. La consulta fue cercana a 1 kHz en el primer sentido y 700 Hz en el segundo, con 13170 notificaciones omitidas; no atribuirlo al sentido sin aislar la causa. Cero asignado y EMA volvieron a cero en STOP, conservando 0.142 V SDK. El encoder estaba desconectado en estos registros. Las instantáneas EMA no aumentaron monótonamente con PWM y no equivalen al promedio de bloque añadido en v5.
-
-### Encoder conectado — 15/09/2026, 15:40
-
-El usuario confirmó que el encoder estaba desconectado antes y se repitieron 82 escalones: [resultados y logs](build-codex/encoder-connected-v4-analysis.md).
-
-- Encoder: +276097 conteos CW y -273618 CCW. A 100 %, +13857/-13908 conteos x4/s; todavía sin CPR para RPM.
-- Arranque sostenido a 35 % en ambos sentidos. Al descender, seguía girando a 20 %, casi detenido a 15 % y detenido a 10 %.
-- Con alpha 0.1, a 100 %: 47.38/47.56 mA equivalentes de CS EMA. A 20 % de subida sin movimiento: 33.80/33.22 mA equivalentes. No son amperios calibrados del devanado ni medias DMA v5.
-- 19.012 millones de conversiones procesadas y aceptadas sin pérdidas DMA ni descartes; consulta alrededor de 700 Hz.
-- Dos intentos iniciales sin ACK no ejecutaron etapas y se excluyeron. Los válidos usaron envío fragmentado de SEQ y confirmación ACK. STOP comprobado entre secuencias y al terminar; no se flasheó durante la repetición.
-
-### Carga desprendida — 15/09/2026, 16:08
-
-Se ejecutaron 82 escalones con v4 y **alpha 0.35 observado**, frente a 0.1 del ensayo anterior. El usuario informó que **la carga se desprendió**. Ambos barridos habían terminado en STOP. El [informe y los registros](build-codex/loaded-v4-analysis.md) son diagnósticos, no una identificación con carga constante.
-
-En CW se observó menor velocidad y mayor CS en niveles intermedios, seguido de recuperación cercana a la referencia a 80–100 %, compatible con cambio de carga. El instante de desprendimiento no se conoce. La adquisición mantuvo unos 200 kS/s sin pérdidas DMA.
-
-### Carga fijada — 15/09/2026, 16:29
-
-El usuario confirmó carga fijada y contenida. Se completaron 82 escalones, con ACK y STOP final, v4 y alpha 0.35: [informe y datos](build-codex/fixed-load-v4-analysis.md). La carga descrita después fue una botella de agua de 3 L colocada en el centro de una plataforma circular asociada al eje; eso no demuestra un par resistente constante ni permite deducir su inercia sin geometría y condiciones de apoyo.
-
-A 100 %: CW, 355.38 mA equivalentes de CS EMA y +8498 conteos/s; CCW, 264.44 mA equivalentes y -10165 conteos/s. Respecto de +13857/-13908 sin esa carga, la velocidad cayó aproximadamente 38.7 % y 26.9 %. Entre 50–65 % hubo giro irregular: no se justifica un modelo lineal único en todo el rango. La comparación de corriente está limitada por el cambio de alpha 0.1 a 0.35, la calibración pendiente y las instantáneas de telemetría.
-
-Se procesaron y aceptaron 18.975 millones de conversiones sin pérdidas DMA ni descartes. La consulta estuvo cerca de 700 Hz. No se modificó ni flasheó firmware durante esa repetición.
-
-El [análisis de identificación](build-codex/fixed-load-identification.md) contiene ajustes estáticos preliminares de velocidad en 70–100 %: `CW: -14573 + 228.5*PWM_%` y `CCW: 13251 - 235.7*PWM_%`, con RMS de 582 y 471 conteos/s. Esos ajustes no son una función de transferencia dinámica ni una sintonía de controlador. Hay umbral de arranque, histéresis, fricción y asimetría de sentido. La calibración y los ensayos repetidos siguen pendientes antes de aceptar un modelo local.
+Los CSV e informes históricos conservan sus datos originales. Las estrategias y resultados anteriores están en el [historial](README_HISTORIAL.md) y en el [estado v5 archivado](docs/history/README_v5_20260921.md); no describen la revisión activa.

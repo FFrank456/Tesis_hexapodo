@@ -30,8 +30,8 @@
   "clangd.arguments": [
     "--background-index",
     "--query-driver=**",
-    "--compile-commands-dir=c:\\IDF_proyects\\ControlCurrentN20\\build"
+    "--compile-commands-dir=${workspaceFolder}/build"
   ],
-  "idf.portWin": "COM6",
-  "idf.flashType": "UART"
+  "idf.flashType": "UART",
+  "idf.port": "COM13"
 }
