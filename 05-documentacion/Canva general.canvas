@@ -1,0 +1,11 @@
+{
+	"nodes":[
+		{"id":"6e0c5df23627ceae","type":"text","text":"MECÁNICA","x":-1000,"y":-440,"width":250,"height":60},
+		{"id":"913cc9b1a35c4fa2","type":"text","text":"TESIS","x":-520,"y":-680,"width":280,"height":60},
+		{"id":"554e747de4d27d44","type":"text","text":"ELECTRÓNICA","x":-290,"y":-460,"width":250,"height":50},
+		{"id":"0545fc5e05d2daed","type":"text","text":"CONTROL","x":360,"y":-465,"width":250,"height":50},
+		{"id":"7128ebae7ec6dba3","type":"file","file":"01-mecanica/notas/analisis-esfuerzos-diseno-hexapodo.md","x":-1040,"y":-240,"width":400,"height":400},
+		{"id":"66eb3d4cbf36e3d8","type":"file","file":"02-electronica/notas/2026-09-04.md","x":-380,"y":-229,"width":400,"height":389}
+	],
+	"edges":[]
+}

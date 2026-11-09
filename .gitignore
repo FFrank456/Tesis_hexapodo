@@ -1,0 +1,60 @@
+# ---------- Sistema / editores ----------
+.DS_Store
+Thumbs.db
+desktop.ini
+~$*
+*.tmp
+*.bak
+*.bak.md
+
+# ---------- Obsidian (estado local) ----------
+.obsidian/workspace.json
+.obsidian/workspace-mobile.json
+.obsidian/cache
+.trash/
+
+# ---------- Repositorios independientes (tienen su propio git) ----------
+03-control/ControlCurrentN20/
+03-control/Git_hub/
+02-electronica/unidad2-PCB-pata-v1/
+
+# ---------- Mallas y CAD pesados (las piezas STL/3MF pequeñas sí se versionan) ----------
+*.step
+*.STEP
+*.stp
+01-mecanica/cad/*.zip
+01-mecanica/cad/base_link.stl
+01-mecanica/urdf/**/meshes/
+
+# ---------- Altium: historial, vistas previas, logs, temporales ----------
+**/History/
+**/__Previews/
+**/Project Logs for */
+*.$$$
+*.PcbDoc.htm
+*.SchDocPreview
+*.PcbDocPreview
+# Zip duplicado de una carpeta que ya está descomprimida
+02-electronica/unidad2-MOD_DRV/*.zip
+# Gerbers: solo se conservan los .zip finales; las carpetas expandidas se ignoran
+02-electronica/unidad2-MOD_DRV/**/Project Outputs for Moduloa_DRV/Nuevo/
+02-electronica/unidad2-MOD_DRV/**/Project Outputs for Moduloa_DRV/Pick Place/
+
+# ---------- KiCad: historial, respaldos, locks ----------
+**/.history/
+*-backups/
+*.kicad_prl
+*.lck
+fp-info-cache
+_autosave-*
+
+# ---------- Referencias PDF grandes y bitmaps ----------
+05-documentacion/referencias/*.pdf
+*.bmp
+
+# ---------- Compilación ----------
+build/
+**/build-*/
+*.o
+*.obj
+*.a

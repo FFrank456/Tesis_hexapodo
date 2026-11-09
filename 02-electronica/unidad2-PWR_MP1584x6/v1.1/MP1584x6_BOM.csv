@@ -1,0 +1,8 @@
+Ref,Cant,Valor,Huella,Nota
+U1-U6,6,Modulo MP1584 mini (22x17 mm),TESIS_PWR:MP1584_Module_22x17mm,Soldar con pines macho cortos; ajustar a 12 V o 5 V antes de conectar
+C1,1,100 uF 35 V electrolitico radial 6.3 mm (paso 2.5 mm),Capacitor_THT:CP_Radial_D6.3mm_P2.50mm,Mide ~11 mm de alto: se puede doblar y dejar acostado
+D1,1,P6KE20A TVS unidireccional (DO-15),Diode_THT:D_DO-15_P3.81mm_Vertical_KathodeUp,Montaje vertical; banda (catodo) al pad cuadrado
+J1,1,Pads para cable 14 AWG (bateria),Connector_Wire:SolderWire-2sqmm_1x02_P7.8mm_D2mm_OD3.9mm,Agujero 2.5 mm; pad cuadrado = +
+J2-J7,6,Pads para cable 18-20 AWG (salida a cada pata),Connector_Wire:SolderWire-1sqmm_1x02_P5.4mm_D1.4mm_OD2.7mm,Agujero 1.75 mm; pad cuadrado = +
+H1-H4,4,Agujero M3 (3.2 mm),MountingHole:MountingHole_3.2mm_M3,A 3.2 mm de cada borde
+(externo),1,Fusible 15 A en el cable de bateria (portafusible de linea mini blade) + interruptor,-,No va en la placa

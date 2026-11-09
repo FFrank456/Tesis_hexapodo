@@ -1,0 +1,9 @@
+Ref,Cant,Valor,Huella,Nota
+U1-U6,6,Modulo MP1584 mini (22x17 mm),TESIS_PWR:MP1584_Module_22x17mm,Soldar con pines macho cortos; ajustar a 12 V o 5 V antes de conectar
+F1,1,Fusible 15 A rapido 2410 (Littelfuse NANO2 serie 451),Fuse:Fuse_Littelfuse-NANO2-451_453,Verificar codigo exacto y tension nominal >= 32 V
+F2-F7,6,Fusible SMD 1206 3 A (>= 24 V),Fuse:Fuse_1206_3216Metric,Ej. Littelfuse serie 466; verificar tension nominal
+C1,1,100 uF 35 V electrolitico SMD 6.3x5.4,Capacitor_SMD:CP_Elec_6.3x5.4,
+D1,1,SMAJ20A TVS unidireccional,Diode_SMD:D_SMA,Catodo a VBUS
+J1,1,Pads para cable 14 AWG (bateria),Connector_Wire:SolderWire-2sqmm_1x02_P7.8mm_D2mm_OD3.9mm,Agujero 2.5 mm
+J2-J7,6,Pads para cable 18-20 AWG (salida a cada pata),Connector_Wire:SolderWire-1sqmm_1x02_P5.4mm_D1.4mm_OD2.7mm,Agujero 1.75 mm
+H1-H4,4,Agujero M3 (3.2 mm),MountingHole:MountingHole_3.2mm_M3,

@@ -1,0 +1,532 @@
+<?xml version="1.0" ?>
+<robot name="ROBOT_ESAMBLE" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+<xacro:include filename="$(find ROBOT_ESAMBLE_description)/urdf/materials.xacro" />
+<xacro:include filename="$(find ROBOT_ESAMBLE_description)/urdf/ROBOT_ESAMBLE.trans" />
+<xacro:include filename="$(find ROBOT_ESAMBLE_description)/urdf/ROBOT_ESAMBLE.gazebo" />
+<link name="base_link">
+  <inertial>
+    <origin xyz="0.03317598330914723 0.08102026220338682 -0.01299545721418369" rpy="0 0 0"/>
+    <mass value="0.7379635668653667"/>
+    <inertia ixx="0.001248" iyy="0.001306" izz="0.002395" ixy="0.0" iyz="-0.0" ixz="-1e-06"/>
+  </inertial>
+  <visual>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <geometry>
+      <mesh filename="file://$(find ROBOT_ESAMBLE_description)/meshes/base_link.stl" scale="0.001 0.001 0.001"/>
+    </geometry>
+    <material name="silver"/>
+  </visual>
+  <collision>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <geometry>
+      <mesh filename="file://$(find ROBOT_ESAMBLE_description)/meshes/base_link.stl" scale="0.001 0.001 0.001"/>
+    </geometry>
+  </collision>
+</link>
+
+<link name="pata_1_coxa_link_1">
+  <inertial>
+    <origin xyz="0.022144968047152075 -0.022168157333396447 2.6493551196502332e-05" rpy="0 0 0"/>
+    <mass value="0.08559160788257007"/>
+    <inertia ixx="1.7e-05" iyy="1.7e-05" izz="3.1e-05" ixy="1.3e-05" iyz="-0.0" ixz="0.0"/>
+  </inertial>
+  <visual>
+    <origin xyz="-0.09266 -0.039416 0.006653" rpy="0 0 0"/>
+    <geometry>
+      <mesh filename="file://$(find ROBOT_ESAMBLE_description)/meshes/pata_1_coxa_link_1.stl" scale="0.001 0.001 0.001"/>
+    </geometry>
+    <material name="silver"/>
+  </visual>
+  <collision>
+    <origin xyz="-0.09266 -0.039416 0.006653" rpy="0 0 0"/>
+    <geometry>
+      <mesh filename="file://$(find ROBOT_ESAMBLE_description)/meshes/pata_1_coxa_link_1.stl" scale="0.001 0.001 0.001"/>
+    </geometry>
+  </collision>
+</link>
+
+<link name="pata_1_femur_link_1">
+  <inertial>
+    <origin xyz="0.024396217857226177 -0.020134875294903057 -1.9715428449841588e-05" rpy="0 0 0"/>
+    <mass value="0.10569265683682096"/>
+    <inertia ixx="4.5e-05" iyy="2.8e-05" izz="6.9e-05" ixy="2.5e-05" iyz="0.0" ixz="-0.0"/>
+  </inertial>
+  <visual>
+    <origin xyz="-0.128015 -0.004061 0.006653" rpy="0 0 0"/>
+    <geometry>
+      <mesh filename="file://$(find ROBOT_ESAMBLE_description)/meshes/pata_1_femur_link_1.stl" scale="0.001 0.001 0.001"/>
+    </geometry>
+    <material name="silver"/>
+  </visual>
+  <collision>
+    <origin xyz="-0.128015 -0.004061 0.006653" rpy="0 0 0"/>
+    <geometry>
+      <mesh filename="file://$(find ROBOT_ESAMBLE_description)/meshes/pata_1_femur_link_1.stl" scale="0.001 0.001 0.001"/>
+    </geometry>
+  </collision>
+</link>
+
+<link name="pata_1_tibia_link_1">
+  <inertial>
+    <origin xyz="0.03213999764401279 -0.02728559476516723 -0.0014281648657780291" rpy="0 0 0"/>
+    <mass value="0.11377271908184522"/>
+    <inertia ixx="0.000107" iyy="7.7e-05" izz="0.000177" ixy="7.9e-05" iyz="-9e-06" ixz="8e-06"/>
+  </inertial>
+  <visual>
+    <origin xyz="-0.170088 0.038719 0.006653" rpy="0 0 0"/>
+    <geometry>
+      <mesh filename="file://$(find ROBOT_ESAMBLE_description)/meshes/pata_1_tibia_link_1.stl" scale="0.001 0.001 0.001"/>
+    </geometry>
+    <material name="silver"/>
+  </visual>
+  <collision>
+    <origin xyz="-0.170088 0.038719 0.006653" rpy="0 0 0"/>
+    <geometry>
+      <mesh filename="file://$(find ROBOT_ESAMBLE_description)/meshes/pata_1_tibia_link_1.stl" scale="0.001 0.001 0.001"/>
+    </geometry>
+  </collision>
+</link>
+
+<link name="pata_2_coxa_link_1">
+  <inertial>
+    <origin xyz="-1.6044370434287192e-05 -0.03133506222481266 -0.0011985041886555439" rpy="0 0 0"/>
+    <mass value="0.08559193918448388"/>
+    <inertia ixx="3e-05" iyy="5e-06" izz="3.1e-05" ixy="0.0" iyz="-0.0" ixz="0.0"/>
+  </inertial>
+  <visual>
+    <origin xyz="-0.03105 -0.019001 0.004903" rpy="0 0 0"/>
+    <geometry>
+      <mesh filename="file://$(find ROBOT_ESAMBLE_description)/meshes/pata_2_coxa_link_1.stl" scale="0.001 0.001 0.001"/>
+    </geometry>
+    <material name="silver"/>
+  </visual>
+  <collision>
+    <origin xyz="-0.03105 -0.019001 0.004903" rpy="0 0 0"/>
+    <geometry>
+      <mesh filename="file://$(find ROBOT_ESAMBLE_description)/meshes/pata_2_coxa_link_1.stl" scale="0.001 0.001 0.001"/>
+    </geometry>
+  </collision>
+</link>
+
+<link name="pata_2_femur_link_1">
+  <inertial>
+    <origin xyz="0.0012884917201337054 -0.0314888308619333 -1.97134967681329e-05" rpy="0 0 0"/>
+    <mass value="0.10569298813777211"/>
+    <inertia ixx="6.1e-05" iyy="1.1e-05" izz="6.9e-05" ixy="-9e-06" iyz="0.0" ixz="0.0"/>
+  </inertial>
+  <visual>
+    <origin xyz="-0.033195 0.030999 0.006128" rpy="0 0 0"/>
+    <geometry>
+      <mesh filename="file://$(find ROBOT_ESAMBLE_description)/meshes/pata_2_femur_link_1.stl" scale="0.001 0.001 0.001"/>
+    </geometry>
+    <material name="silver"/>
+  </visual>
+  <collision>
+    <origin xyz="-0.033195 0.030999 0.006128" rpy="0 0 0"/>
+    <geometry>
+      <mesh filename="file://$(find ROBOT_ESAMBLE_description)/meshes/pata_2_femur_link_1.stl" scale="0.001 0.001 0.001"/>
+    </geometry>
+  </collision>
+</link>
+
+<link name="pata_2_tibia_link_1">
+  <inertial>
+    <origin xyz="0.0016826652445112306 -0.042020611464471225 -0.0014281770082038396" rpy="0 0 0"/>
+    <mass value="0.1137727090269333"/>
+    <inertia ixx="0.000171" iyy="1.4e-05" izz="0.000177" ixy="-1.5e-05" iyz="-1.3e-05" ixz="-1e-06"/>
+  </inertial>
+  <visual>
+    <origin xyz="-0.033115 0.090999 0.006128" rpy="0 0 0"/>
+    <geometry>
+      <mesh filename="file://$(find ROBOT_ESAMBLE_description)/meshes/pata_2_tibia_link_1.stl" scale="0.001 0.001 0.001"/>
+    </geometry>
+    <material name="silver"/>
+  </visual>
+  <collision>
+    <origin xyz="-0.033115 0.090999 0.006128" rpy="0 0 0"/>
+    <geometry>
+      <mesh filename="file://$(find ROBOT_ESAMBLE_description)/meshes/pata_2_tibia_link_1.stl" scale="0.001 0.001 0.001"/>
+    </geometry>
+  </collision>
+</link>
+
+<link name="pata_3_coxa_link_1">
+  <inertial>
+    <origin xyz="-0.02216797519074421 -0.022145350665576102 -0.001198505204467389" rpy="0 0 0"/>
+    <mass value="0.08559166746236546"/>
+    <inertia ixx="1.7e-05" iyy="1.7e-05" izz="3.1e-05" ixy="-1.3e-05" iyz="-0.0" ixz="-0.0"/>
+  </inertial>
+  <visual>
+    <origin xyz="0.02556 -0.034416 0.004903" rpy="0 0 0"/>
+    <geometry>
+      <mesh filename="file://$(find ROBOT_ESAMBLE_description)/meshes/pata_3_coxa_link_1.stl" scale="0.001 0.001 0.001"/>
+    </geometry>
+    <material name="silver"/>
+  </visual>
+  <collision>
+    <origin xyz="0.02556 -0.034416 0.004903" rpy="0 0 0"/>
+    <geometry>
+      <mesh filename="file://$(find ROBOT_ESAMBLE_description)/meshes/pata_3_coxa_link_1.stl" scale="0.001 0.001 0.001"/>
+    </geometry>
+  </collision>
+</link>
+
+<link name="pata_3_femur_link_1">
+  <inertial>
+    <origin xyz="-0.021354748674172606 -0.023176500346426158 -1.971444412766487e-05" rpy="0 0 0"/>
+    <mass value="0.10569271641467769"/>
+    <inertia ixx="2.8e-05" iyy="4.5e-05" izz="6.9e-05" ixy="-2.5e-05" iyz="0.0" ixz="0.0"/>
+  </inertial>
+  <visual>
+    <origin xyz="0.059398 0.002456 0.006128" rpy="0 0 0"/>
+    <geometry>
+      <mesh filename="file://$(find ROBOT_ESAMBLE_description)/meshes/pata_3_femur_link_1.stl" scale="0.001 0.001 0.001"/>
+    </geometry>
+    <material name="silver"/>
+  </visual>
+  <collision>
+    <origin xyz="0.059398 0.002456 0.006128" rpy="0 0 0"/>
+    <geometry>
+      <mesh filename="file://$(find ROBOT_ESAMBLE_description)/meshes/pata_3_femur_link_1.stl" scale="0.001 0.001 0.001"/>
+    </geometry>
+  </collision>
+</link>
+
+<link name="pata_3_tibia_link_1">
+  <inertial>
+    <origin xyz="-0.028523319321332063 -0.030902281848194442 -0.001428164865803814" rpy="0 0 0"/>
+    <mass value="0.11377271907990445"/>
+    <inertia ixx="7.7e-05" iyy="0.000107" izz="0.000177" ixy="-7.9e-05" iyz="-8e-06" ixz="-9e-06"/>
+  </inertial>
+  <visual>
+    <origin xyz="0.101881 0.044826 0.006128" rpy="0 0 0"/>
+    <geometry>
+      <mesh filename="file://$(find ROBOT_ESAMBLE_description)/meshes/pata_3_tibia_link_1.stl" scale="0.001 0.001 0.001"/>
+    </geometry>
+    <material name="silver"/>
+  </visual>
+  <collision>
+    <origin xyz="0.101881 0.044826 0.006128" rpy="0 0 0"/>
+    <geometry>
+      <mesh filename="file://$(find ROBOT_ESAMBLE_description)/meshes/pata_3_tibia_link_1.stl" scale="0.001 0.001 0.001"/>
+    </geometry>
+  </collision>
+</link>
+
+<link name="pata_4_coxa_link_1">
+  <inertial>
+    <origin xyz="-0.022169387484398458 0.02214350604983767 -0.0011914696164353625" rpy="0 0 0"/>
+    <mass value="0.08559166309055002"/>
+    <inertia ixx="1.7e-05" iyy="1.7e-05" izz="3.1e-05" ixy="1.3e-05" iyz="0.0" ixz="-0.0"/>
+  </inertial>
+  <visual>
+    <origin xyz="0.02556 -0.127636 0.004903" rpy="0 0 0"/>
+    <geometry>
+      <mesh filename="file://$(find ROBOT_ESAMBLE_description)/meshes/pata_4_coxa_link_1.stl" scale="0.001 0.001 0.001"/>
+    </geometry>
+    <material name="silver"/>
+  </visual>
+  <collision>
+    <origin xyz="0.02556 -0.127636 0.004903" rpy="0 0 0"/>
+    <geometry>
+      <mesh filename="file://$(find ROBOT_ESAMBLE_description)/meshes/pata_4_coxa_link_1.stl" scale="0.001 0.001 0.001"/>
+    </geometry>
+  </collision>
+</link>
+
+<link name="pata_4_femur_link_1">
+  <inertial>
+    <origin xyz="-0.02135476211304222 0.023176156374110107 2.0078528855257093e-05" rpy="0 0 0"/>
+    <mass value="0.10569271156739958"/>
+    <inertia ixx="2.8e-05" iyy="4.5e-05" izz="6.9e-05" ixy="2.5e-05" iyz="0.0" ixz="-0.0"/>
+  </inertial>
+  <visual>
+    <origin xyz="0.059398 -0.164508 0.006128" rpy="0 0 0"/>
+    <geometry>
+      <mesh filename="file://$(find ROBOT_ESAMBLE_description)/meshes/pata_4_femur_link_1.stl" scale="0.001 0.001 0.001"/>
+    </geometry>
+    <material name="silver"/>
+  </visual>
+  <collision>
+    <origin xyz="0.059398 -0.164508 0.006128" rpy="0 0 0"/>
+    <geometry>
+      <mesh filename="file://$(find ROBOT_ESAMBLE_description)/meshes/pata_4_femur_link_1.stl" scale="0.001 0.001 0.001"/>
+    </geometry>
+  </collision>
+</link>
+
+<link name="pata_4_tibia_link_1">
+  <inertial>
+    <origin xyz="-0.02851926895703133 0.030898262969639628 -0.0013964909430696096" rpy="0 0 0"/>
+    <mass value="0.11377271907073985"/>
+    <inertia ixx="7.7e-05" iyy="0.000107" izz="0.000177" ixy="7.9e-05" iyz="8e-06" ixz="-1e-05"/>
+  </inertial>
+  <visual>
+    <origin xyz="0.101881 -0.206878 0.006128" rpy="0 0 0"/>
+    <geometry>
+      <mesh filename="file://$(find ROBOT_ESAMBLE_description)/meshes/pata_4_tibia_link_1.stl" scale="0.001 0.001 0.001"/>
+    </geometry>
+    <material name="silver"/>
+  </visual>
+  <collision>
+    <origin xyz="0.101881 -0.206878 0.006128" rpy="0 0 0"/>
+    <geometry>
+      <mesh filename="file://$(find ROBOT_ESAMBLE_description)/meshes/pata_4_tibia_link_1.stl" scale="0.001 0.001 0.001"/>
+    </geometry>
+  </collision>
+</link>
+
+<link name="pata_5_coxa_link_1">
+  <inertial>
+    <origin xyz="-1.8027124924401006e-05 0.031335147787831086 -0.0011918243195981199" rpy="0 0 0"/>
+    <mass value="0.08559191897923552"/>
+    <inertia ixx="3e-05" iyy="5e-06" izz="3.1e-05" ixy="-0.0" iyz="0.0" ixz="-0.0"/>
+  </inertial>
+  <visual>
+    <origin xyz="-0.03105 -0.143051 0.004903" rpy="0 0 0"/>
+    <geometry>
+      <mesh filename="file://$(find ROBOT_ESAMBLE_description)/meshes/pata_5_coxa_link_1.stl" scale="0.001 0.001 0.001"/>
+    </geometry>
+    <material name="silver"/>
+  </visual>
+  <collision>
+    <origin xyz="-0.03105 -0.143051 0.004903" rpy="0 0 0"/>
+    <geometry>
+      <mesh filename="file://$(find ROBOT_ESAMBLE_description)/meshes/pata_5_coxa_link_1.stl" scale="0.001 0.001 0.001"/>
+    </geometry>
+  </collision>
+</link>
+
+<link name="pata_5_femur_link_1">
+  <inertial>
+    <origin xyz="0.0012884860170833123 0.031488860982138184 1.9609289186472804e-05" rpy="0 0 0"/>
+    <mass value="0.10569296744467865"/>
+    <inertia ixx="6.1e-05" iyy="1.1e-05" izz="6.9e-05" ixy="9e-06" iyz="0.0" ixz="-0.0"/>
+  </inertial>
+  <visual>
+    <origin xyz="-0.033195 -0.193051 0.006128" rpy="0 0 0"/>
+    <geometry>
+      <mesh filename="file://$(find ROBOT_ESAMBLE_description)/meshes/pata_5_femur_link_1.stl" scale="0.001 0.001 0.001"/>
+    </geometry>
+    <material name="silver"/>
+  </visual>
+  <collision>
+    <origin xyz="-0.033195 -0.193051 0.006128" rpy="0 0 0"/>
+    <geometry>
+      <mesh filename="file://$(find ROBOT_ESAMBLE_description)/meshes/pata_5_femur_link_1.stl" scale="0.001 0.001 0.001"/>
+    </geometry>
+  </collision>
+</link>
+
+<link name="pata_5_tibia_link_1">
+  <inertial>
+    <origin xyz="0.001682664044974365 0.04201502318307171 -0.0013969443578972628" rpy="0 0 0"/>
+    <mass value="0.11377275847834775"/>
+    <inertia ixx="0.000171" iyy="1.4e-05" izz="0.000177" ixy="1.5e-05" iyz="1.3e-05" ixz="-1e-06"/>
+  </inertial>
+  <visual>
+    <origin xyz="-0.033115 -0.253051 0.006128" rpy="0 0 0"/>
+    <geometry>
+      <mesh filename="file://$(find ROBOT_ESAMBLE_description)/meshes/pata_5_tibia_link_1.stl" scale="0.001 0.001 0.001"/>
+    </geometry>
+    <material name="silver"/>
+  </visual>
+  <collision>
+    <origin xyz="-0.033115 -0.253051 0.006128" rpy="0 0 0"/>
+    <geometry>
+      <mesh filename="file://$(find ROBOT_ESAMBLE_description)/meshes/pata_5_tibia_link_1.stl" scale="0.001 0.001 0.001"/>
+    </geometry>
+  </collision>
+</link>
+
+<link name="pata_6_coxa_link_1">
+  <inertial>
+    <origin xyz="0.022143573825311083 0.02216911645395539 -0.0011914697125889155" rpy="0 0 0"/>
+    <mass value="0.08559161141331934"/>
+    <inertia ixx="1.7e-05" iyy="1.7e-05" izz="3.1e-05" ixy="-1.3e-05" iyz="0.0" ixz="0.0"/>
+  </inertial>
+  <visual>
+    <origin xyz="-0.09266 -0.122636 0.004903" rpy="0 0 0"/>
+    <geometry>
+      <mesh filename="file://$(find ROBOT_ESAMBLE_description)/meshes/pata_6_coxa_link_1.stl" scale="0.001 0.001 0.001"/>
+    </geometry>
+    <material name="silver"/>
+  </visual>
+  <collision>
+    <origin xyz="-0.09266 -0.122636 0.004903" rpy="0 0 0"/>
+    <geometry>
+      <mesh filename="file://$(find ROBOT_ESAMBLE_description)/meshes/pata_6_coxa_link_1.stl" scale="0.001 0.001 0.001"/>
+    </geometry>
+  </collision>
+</link>
+
+<link name="pata_6_femur_link_1">
+  <inertial>
+    <origin xyz="0.023176204280187268 0.021354542702861995 2.0078444410528105e-05" rpy="0 0 0"/>
+    <mass value="0.10569265989210808"/>
+    <inertia ixx="4.5e-05" iyy="2.8e-05" izz="6.9e-05" ixy="-2.5e-05" iyz="0.0" ixz="0.0"/>
+  </inertial>
+  <visual>
+    <origin xyz="-0.129532 -0.156474 0.006128" rpy="0 0 0"/>
+    <geometry>
+      <mesh filename="file://$(find ROBOT_ESAMBLE_description)/meshes/pata_6_femur_link_1.stl" scale="0.001 0.001 0.001"/>
+    </geometry>
+    <material name="silver"/>
+  </visual>
+  <collision>
+    <origin xyz="-0.129532 -0.156474 0.006128" rpy="0 0 0"/>
+    <geometry>
+      <mesh filename="file://$(find ROBOT_ESAMBLE_description)/meshes/pata_6_femur_link_1.stl" scale="0.001 0.001 0.001"/>
+    </geometry>
+  </collision>
+</link>
+
+<link name="pata_6_tibia_link_1">
+  <inertial>
+    <origin xyz="0.030898242406704524 0.028519280744789544 -0.001396490943031188" rpy="0 0 0"/>
+    <mass value="0.1137727190725414"/>
+    <inertia ixx="0.000107" iyy="7.7e-05" izz="0.000177" ixy="-7.9e-05" iyz="1e-05" ixz="8e-06"/>
+  </inertial>
+  <visual>
+    <origin xyz="-0.171902 -0.198957 0.006128" rpy="0 0 0"/>
+    <geometry>
+      <mesh filename="file://$(find ROBOT_ESAMBLE_description)/meshes/pata_6_tibia_link_1.stl" scale="0.001 0.001 0.001"/>
+    </geometry>
+    <material name="silver"/>
+  </visual>
+  <collision>
+    <origin xyz="-0.171902 -0.198957 0.006128" rpy="0 0 0"/>
+    <geometry>
+      <mesh filename="file://$(find ROBOT_ESAMBLE_description)/meshes/pata_6_tibia_link_1.stl" scale="0.001 0.001 0.001"/>
+    </geometry>
+  </collision>
+</link>
+
+<joint name="join_coxa_1" type="continuous">
+  <origin xyz="0.09266 0.039416 -0.006653" rpy="0 0 0"/>
+  <parent link="base_link"/>
+  <child link="pata_1_coxa_link_1"/>
+  <axis xyz="-0.0 0.0 1.0"/>
+</joint>
+
+<joint name="join_femur_1" type="continuous">
+  <origin xyz="0.035355 -0.035355 0.0" rpy="0 0 0"/>
+  <parent link="pata_1_coxa_link_1"/>
+  <child link="pata_1_femur_link_1"/>
+  <axis xyz="0.707107 0.707107 -0.0"/>
+</joint>
+
+<joint name="join_tibia_1" type="continuous">
+  <origin xyz="0.042073 -0.04278 0.0" rpy="0 0 0"/>
+  <parent link="pata_1_femur_link_1"/>
+  <child link="pata_1_tibia_link_1"/>
+  <axis xyz="0.707107 0.707107 0.0"/>
+</joint>
+
+<joint name="join_coxa_2" type="continuous">
+  <origin xyz="0.03105 0.019001 -0.004903" rpy="0 0 0"/>
+  <parent link="base_link"/>
+  <child link="pata_2_coxa_link_1"/>
+  <axis xyz="-0.0 0.0 1.0"/>
+</joint>
+
+<joint name="join_femur_2" type="continuous">
+  <origin xyz="0.002145 -0.05 -0.001225" rpy="0 0 0"/>
+  <parent link="pata_2_coxa_link_1"/>
+  <child link="pata_2_femur_link_1"/>
+  <axis xyz="-1.0 -0.0 0.0"/>
+</joint>
+
+<joint name="join_tibia_2" type="continuous">
+  <origin xyz="-8e-05 -0.06 0.0" rpy="0 0 0"/>
+  <parent link="pata_2_femur_link_1"/>
+  <child link="pata_2_tibia_link_1"/>
+  <axis xyz="-1.0 0.0 0.0"/>
+</joint>
+
+<joint name="join_coxa_3" type="continuous">
+  <origin xyz="-0.02556 0.034416 -0.004903" rpy="0 0 0"/>
+  <parent link="base_link"/>
+  <child link="pata_3_coxa_link_1"/>
+  <axis xyz="-0.0 0.0 1.0"/>
+</joint>
+
+<joint name="join_femur_3" type="continuous">
+  <origin xyz="-0.033838 -0.036872 -0.001225" rpy="0 0 0"/>
+  <parent link="pata_3_coxa_link_1"/>
+  <child link="pata_3_femur_link_1"/>
+  <axis xyz="-0.707107 0.707107 -0.0"/>
+</joint>
+
+<joint name="join_tibia_3" type="continuous">
+  <origin xyz="-0.042483 -0.04237 0.0" rpy="0 0 0"/>
+  <parent link="pata_3_femur_link_1"/>
+  <child link="pata_3_tibia_link_1"/>
+  <axis xyz="-0.707107 0.707107 -0.0"/>
+</joint>
+
+<joint name="join_coxa_4" type="continuous">
+  <origin xyz="-0.02556 0.127636 -0.004903" rpy="0 0 0"/>
+  <parent link="base_link"/>
+  <child link="pata_4_coxa_link_1"/>
+  <axis xyz="-0.0 0.0 1.0"/>
+</joint>
+
+<joint name="join_femur_4" type="continuous">
+  <origin xyz="-0.033838 0.036872 -0.001225" rpy="0 0 0"/>
+  <parent link="pata_4_coxa_link_1"/>
+  <child link="pata_4_femur_link_1"/>
+  <axis xyz="-0.707107 -0.707107 -0.0"/>
+</joint>
+
+<joint name="join_tibia_4" type="continuous">
+  <origin xyz="-0.042483 0.04237 0.0" rpy="0 0 0"/>
+  <parent link="pata_4_femur_link_1"/>
+  <child link="pata_4_tibia_link_1"/>
+  <axis xyz="-0.707107 -0.707107 -0.0"/>
+</joint>
+
+<joint name="join_coxa_5" type="continuous">
+  <origin xyz="0.03105 0.143051 -0.004903" rpy="0 0 0"/>
+  <parent link="base_link"/>
+  <child link="pata_5_coxa_link_1"/>
+  <axis xyz="0.0 0.0 1.0"/>
+</joint>
+
+<joint name="join_femur_5" type="continuous">
+  <origin xyz="0.002145 0.05 -0.001225" rpy="0 0 0"/>
+  <parent link="pata_5_coxa_link_1"/>
+  <child link="pata_5_femur_link_1"/>
+  <axis xyz="-1.0 0.0 -0.0"/>
+</joint>
+
+<joint name="join_tibia_5" type="continuous">
+  <origin xyz="-8e-05 0.06 0.0" rpy="0 0 0"/>
+  <parent link="pata_5_femur_link_1"/>
+  <child link="pata_5_tibia_link_1"/>
+  <axis xyz="-1.0 0.0 -0.0"/>
+</joint>
+
+<joint name="join_coxa_6" type="continuous">
+  <origin xyz="0.09266 0.122636 -0.004903" rpy="0 0 0"/>
+  <parent link="base_link"/>
+  <child link="pata_6_coxa_link_1"/>
+  <axis xyz="-0.0 0.0 1.0"/>
+</joint>
+
+<joint name="join_femur_6" type="continuous">
+  <origin xyz="0.036872 0.033838 -0.001225" rpy="0 0 0"/>
+  <parent link="pata_6_coxa_link_1"/>
+  <child link="pata_6_femur_link_1"/>
+  <axis xyz="-0.707107 0.707107 -0.0"/>
+</joint>
+
+<joint name="join_tibia_6" type="continuous">
+  <origin xyz="0.04237 0.042483 0.0" rpy="0 0 0"/>
+  <parent link="pata_6_femur_link_1"/>
+  <child link="pata_6_tibia_link_1"/>
+  <axis xyz="-0.707107 0.707107 -0.0"/>
+</joint>
+
+</robot>
