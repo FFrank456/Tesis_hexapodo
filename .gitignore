@@ -14,7 +14,7 @@ desktop.ini
 .trash/
 
 # ---------- Repositorios independientes (tienen su propio git) ----------
-03-control/ControlCurrentN20/
+# ControlCurrentN20 sí se versiona aquí (copia del firmware; original en AkylesByte89/IDF_motions)
 03-control/Git_hub/
 02-electronica/unidad2-PCB-pata-v1/
 

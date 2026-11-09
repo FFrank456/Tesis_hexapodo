@@ -16,7 +16,7 @@ Dos hexápodos que cooperan para **mapear y detectar gases tóxicos** en terreno
 |---|---|
 | `01-mecanica/` | Notas de diseño, CAD (STL/3MF), paquetes URDF, soportes |
 | `02-electronica/` | Arquitectura, MOD_DRV (Altium), PCBicho 6× MP1584 (KiCad), diagramas |
-| `03-control/` | Control de corriente/velocidad/posición, calibración de servos |
+| `03-control/` | Control de corriente/velocidad/posición (firmware `ControlCurrentN20`, ESP-IDF), calibración de servos |
 | `04-navegacion/` | RTAB-Map + Nav2 (U1) |
 | `05-documentacion/` | Tesis y capítulos, estado del arte, gases, cooperación, normativa, decisiones |
 
@@ -26,6 +26,5 @@ Abrir la carpeta como bóveda en Obsidian. Cada área tiene una nota índice con
 - Mallas de los URDF, `base_link.stl` y archivos STEP: se regeneran desde Fusion 360 o Altium. Las piezas STL/3MF pequeñas sí se versionan.
 - Historial, vistas previas y logs de Altium; historial de KiCad.
 - Repositorios independientes:
-  - `03-control/ControlCurrentN20` → https://github.com/AkylesByte89/IDF_motions
   - `02-electronica/unidad2-PCB-pata-v1` → Altium 365
 - PDF de referencias (en `05-documentacion/referencias/`, solo en local).

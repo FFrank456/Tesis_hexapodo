@@ -1,0 +1,461 @@
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <fcntl.h>
+#include <unistd.h>
+
+#include "driver/mcpwm_prelude.h"
+#include "esp_adc/adc_oneshot.h"
+#include "esp_err.h"
+#include "esp_log.h"
+#include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+
+/*
+ * ControlCurrentN20 - version MCPWM sincronizada
+ *
+ * Hardware:
+ * - GPIO27 -> IN1/PH del DRV8876: PWM para giro horario.
+ * - GPIO26 -> IN2/EN del DRV8876: PWM para giro antihorario.
+ * - GPIO32 -> CS/IPROPI del DRV8876: voltaje proporcional a corriente.
+ *
+ * Estructura:
+ * 1. MCPWM genera los dos PWM desde el mismo timer.
+ * 2. Un comparador MCPWM adicional dispara un evento en un punto fijo del periodo.
+ * 3. El callback del comparador despierta la tarea adc_sample_task().
+ * 4. adc_sample_task() lee el ADC en sincronía con el PWM y actualiza telemetría.
+ * 5. app_main() atiende comandos seriales y envía datos CSV a Processing.
+ *
+ * Se aplica un filtro EMA a la corriente para observar una señal más útil en control.
+ */
+
+#define PWM_GPIO_CW                         27
+#define PWM_GPIO_CCW                        26
+
+#define PWM_FREQUENCY_HZ                    10000U
+#define PWM_DUTY_BITS                       12U
+#define PWM_PERIOD_TICKS                    (1U << PWM_DUTY_BITS)
+#define PWM_MAX_DUTY                        (PWM_PERIOD_TICKS - 1U)
+#define MCPWM_TIMER_RESOLUTION_HZ           (PWM_FREQUENCY_HZ * PWM_PERIOD_TICKS)
+#define MCPWM_GROUP_ID                      0
+
+#define ADC_INPUT_GPIO                      32
+#define ADC_UNIT                            ADC_UNIT_1
+#define ADC_INPUT_CHANNEL                   ADC_CHANNEL_4
+#define ADC_WIDTH                           ADC_BITWIDTH_12
+#define ADC_MAX_RAW                         ((1U << 12U) - 1U)
+#define ADC_REFERENCE_VOLTAGE               3.3f
+#define DRV8876_CS_VOLTS_PER_AMP            2.49f
+#define CURRENT_EMA_ALPHA                   0.1f
+
+#define ADC_SAMPLE_RATE_HZ                  1000U
+#define PROCESSING_RATE_HZ                  100U
+#define PWM_CYCLES_PER_ADC_SAMPLE           (PWM_FREQUENCY_HZ / ADC_SAMPLE_RATE_HZ)
+#define ADC_SAMPLING_COMPARE_TICKS          (PWM_PERIOD_TICKS / 2U)
+#define PROCESSING_PERIOD_MS                (1000U / PROCESSING_RATE_HZ)
+#define COMMAND_BUFFER_SIZE                 64
+
+_Static_assert(PWM_FREQUENCY_HZ % ADC_SAMPLE_RATE_HZ == 0,
+               "ADC_SAMPLE_RATE_HZ must divide PWM_FREQUENCY_HZ");
+
+typedef enum {
+    MOTOR_STOP = 0,
+    MOTOR_CW,
+    MOTOR_CCW,
+} motor_direction_t;
+
+typedef struct {
+    uint32_t time_ms;
+    uint32_t adc_sample_count;
+    int adc_raw;
+    float adc_voltage;
+    float current_raw_a;
+    float current_ema_a;
+    motor_direction_t direction;
+    uint32_t duty_cw;
+    uint32_t duty_ccw;
+} telemetry_t;
+
+typedef struct {
+    mcpwm_timer_handle_t timer;
+    mcpwm_oper_handle_t pwm_operator;
+    mcpwm_oper_handle_t sample_operator;
+    mcpwm_cmpr_handle_t comparator_cw;
+    mcpwm_cmpr_handle_t comparator_ccw;
+    mcpwm_cmpr_handle_t comparator_adc_sample;
+    mcpwm_gen_handle_t generator_cw;
+    mcpwm_gen_handle_t generator_ccw;
+} motor_pwm_t;
+
+static motor_pwm_t g_pwm = {0};
+static adc_oneshot_unit_handle_t g_adc_handle = NULL;
+static TaskHandle_t g_adc_task_handle = NULL;
+static portMUX_TYPE g_state_lock = portMUX_INITIALIZER_UNLOCKED;
+
+static telemetry_t g_telemetry = {0};
+static motor_direction_t g_direction = MOTOR_STOP;
+static uint32_t g_duty_cw = 0;
+static uint32_t g_duty_ccw = 0;
+
+static const char *motor_direction_to_text(motor_direction_t direction)
+{
+    switch (direction) {
+    case MOTOR_CW:
+        return "CW";
+    case MOTOR_CCW:
+        return "CCW";
+    case MOTOR_STOP:
+    default:
+        return "STOP";
+    }
+}
+
+static float adc_raw_to_voltage(int raw)
+{
+    return ((float)raw * ADC_REFERENCE_VOLTAGE) / (float)ADC_MAX_RAW;
+}
+
+static uint32_t clamp_duty(uint32_t duty)
+{
+    return duty > PWM_MAX_DUTY ? PWM_MAX_DUTY : duty;
+}
+
+static void serial_command_init(void)
+{
+    int flags = fcntl(STDIN_FILENO, F_GETFL, 0);
+    if (flags >= 0) {
+        fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
+    }
+}
+
+static void adc_init(void)
+{
+    adc_oneshot_unit_init_cfg_t unit_config = {0};
+    unit_config.unit_id = ADC_UNIT;
+    unit_config.clk_src = ADC_RTC_CLK_SRC_DEFAULT;
+    unit_config.ulp_mode = ADC_ULP_MODE_DISABLE;
+    ESP_ERROR_CHECK(adc_oneshot_new_unit(&unit_config, &g_adc_handle));
+
+    adc_oneshot_chan_cfg_t channel_config = {0};
+    channel_config.atten = ADC_ATTEN_DB_12;
+    channel_config.bitwidth = ADC_WIDTH;
+    ESP_ERROR_CHECK(adc_oneshot_config_channel(g_adc_handle, ADC_INPUT_CHANNEL, &channel_config));
+}
+
+static void mcpwm_set_generator_for_duty(mcpwm_gen_handle_t generator,
+                                         mcpwm_cmpr_handle_t comparator,
+                                         uint32_t duty)
+{
+    duty = clamp_duty(duty);
+
+    if (duty == 0) {
+        ESP_ERROR_CHECK(mcpwm_generator_set_force_level(generator, 0, true));
+        ESP_ERROR_CHECK(mcpwm_comparator_set_compare_value(comparator, 0));
+        return;
+    }
+
+    ESP_ERROR_CHECK(mcpwm_comparator_set_compare_value(comparator, duty));
+    ESP_ERROR_CHECK(mcpwm_generator_set_force_level(generator, -1, true));
+}
+
+static void motor_set_output(motor_direction_t direction, uint32_t duty)
+{
+    uint32_t duty_cw = 0;
+    uint32_t duty_ccw = 0;
+
+    duty = clamp_duty(duty);
+    if (direction == MOTOR_CW) {
+        duty_cw = duty;
+    } else if (direction == MOTOR_CCW) {
+        duty_ccw = duty;
+    } else {
+        direction = MOTOR_STOP;
+    }
+
+    /*
+     * Primero se fuerzan ambas salidas a bajo. Luego se actualiza el comparador
+     * y se libera solo la salida activa. Asi IN1 e IN2 no quedan activos juntos.
+     */
+    ESP_ERROR_CHECK(mcpwm_generator_set_force_level(g_pwm.generator_cw, 0, true));
+    ESP_ERROR_CHECK(mcpwm_generator_set_force_level(g_pwm.generator_ccw, 0, true));
+    mcpwm_set_generator_for_duty(g_pwm.generator_cw, g_pwm.comparator_cw, duty_cw);
+    mcpwm_set_generator_for_duty(g_pwm.generator_ccw, g_pwm.comparator_ccw, duty_ccw);
+
+    portENTER_CRITICAL(&g_state_lock);
+    g_direction = direction;
+    g_duty_cw = duty_cw;
+    g_duty_ccw = duty_ccw;
+    g_telemetry.direction = direction;
+    g_telemetry.duty_cw = duty_cw;
+    g_telemetry.duty_ccw = duty_ccw;
+    portEXIT_CRITICAL(&g_state_lock);
+}
+
+static bool adc_sample_compare_callback(mcpwm_cmpr_handle_t comparator,
+                                        const mcpwm_compare_event_data_t *edata,
+                                        void *user_ctx)
+{
+    static uint32_t pwm_cycle_count = 0;
+    BaseType_t high_task_woken = pdFALSE;
+
+    (void)comparator;
+    (void)edata;
+    (void)user_ctx;
+
+    pwm_cycle_count++;
+    if (pwm_cycle_count >= PWM_CYCLES_PER_ADC_SAMPLE) {
+        pwm_cycle_count = 0;
+        if (g_adc_task_handle != NULL) {
+            vTaskNotifyGiveFromISR(g_adc_task_handle, &high_task_woken);
+        }
+    }
+
+    return high_task_woken == pdTRUE;
+}
+
+static void mcpwm_init(void)
+{
+    mcpwm_timer_config_t timer_config = {0};
+    timer_config.group_id = MCPWM_GROUP_ID;
+    timer_config.clk_src = MCPWM_TIMER_CLK_SRC_DEFAULT;
+    timer_config.resolution_hz = MCPWM_TIMER_RESOLUTION_HZ;
+    timer_config.period_ticks = PWM_PERIOD_TICKS;
+    timer_config.count_mode = MCPWM_TIMER_COUNT_MODE_UP;
+    ESP_ERROR_CHECK(mcpwm_new_timer(&timer_config, &g_pwm.timer));
+
+    mcpwm_operator_config_t pwm_operator_config = {0};
+    pwm_operator_config.group_id = MCPWM_GROUP_ID;
+    pwm_operator_config.flags.update_gen_action_on_tez = true;
+    ESP_ERROR_CHECK(mcpwm_new_operator(&pwm_operator_config, &g_pwm.pwm_operator));
+    ESP_ERROR_CHECK(mcpwm_operator_connect_timer(g_pwm.pwm_operator, g_pwm.timer));
+
+    mcpwm_operator_config_t sample_operator_config = {0};
+    sample_operator_config.group_id = MCPWM_GROUP_ID;
+    ESP_ERROR_CHECK(mcpwm_new_operator(&sample_operator_config, &g_pwm.sample_operator));
+    ESP_ERROR_CHECK(mcpwm_operator_connect_timer(g_pwm.sample_operator, g_pwm.timer));
+
+    mcpwm_comparator_config_t pwm_comparator_config = {0};
+    pwm_comparator_config.flags.update_cmp_on_tez = true;
+    ESP_ERROR_CHECK(mcpwm_new_comparator(g_pwm.pwm_operator, &pwm_comparator_config, &g_pwm.comparator_cw));
+    ESP_ERROR_CHECK(mcpwm_new_comparator(g_pwm.pwm_operator, &pwm_comparator_config, &g_pwm.comparator_ccw));
+
+    mcpwm_comparator_config_t sample_comparator_config = {0};
+    ESP_ERROR_CHECK(mcpwm_new_comparator(g_pwm.sample_operator, &sample_comparator_config,
+                                         &g_pwm.comparator_adc_sample));
+    ESP_ERROR_CHECK(mcpwm_comparator_set_compare_value(g_pwm.comparator_adc_sample,
+                                                       ADC_SAMPLING_COMPARE_TICKS));
+
+    mcpwm_generator_config_t generator_cw_config = {0};
+    generator_cw_config.gen_gpio_num = PWM_GPIO_CW;
+    ESP_ERROR_CHECK(mcpwm_new_generator(g_pwm.pwm_operator, &generator_cw_config, &g_pwm.generator_cw));
+
+    mcpwm_generator_config_t generator_ccw_config = {0};
+    generator_ccw_config.gen_gpio_num = PWM_GPIO_CCW;
+    ESP_ERROR_CHECK(mcpwm_new_generator(g_pwm.pwm_operator, &generator_ccw_config, &g_pwm.generator_ccw));
+
+    ESP_ERROR_CHECK(mcpwm_comparator_set_compare_value(g_pwm.comparator_cw, 0));
+    ESP_ERROR_CHECK(mcpwm_comparator_set_compare_value(g_pwm.comparator_ccw, 0));
+
+    ESP_ERROR_CHECK(mcpwm_generator_set_action_on_timer_event(
+        g_pwm.generator_cw,
+        MCPWM_GEN_TIMER_EVENT_ACTION(MCPWM_TIMER_DIRECTION_UP,
+                                     MCPWM_TIMER_EVENT_EMPTY,
+                                     MCPWM_GEN_ACTION_HIGH)));
+    ESP_ERROR_CHECK(mcpwm_generator_set_action_on_compare_event(
+        g_pwm.generator_cw,
+        MCPWM_GEN_COMPARE_EVENT_ACTION(MCPWM_TIMER_DIRECTION_UP,
+                                       g_pwm.comparator_cw,
+                                       MCPWM_GEN_ACTION_LOW)));
+
+    ESP_ERROR_CHECK(mcpwm_generator_set_action_on_timer_event(
+        g_pwm.generator_ccw,
+        MCPWM_GEN_TIMER_EVENT_ACTION(MCPWM_TIMER_DIRECTION_UP,
+                                     MCPWM_TIMER_EVENT_EMPTY,
+                                     MCPWM_GEN_ACTION_HIGH)));
+    ESP_ERROR_CHECK(mcpwm_generator_set_action_on_compare_event(
+        g_pwm.generator_ccw,
+        MCPWM_GEN_COMPARE_EVENT_ACTION(MCPWM_TIMER_DIRECTION_UP,
+                                       g_pwm.comparator_ccw,
+                                       MCPWM_GEN_ACTION_LOW)));
+
+    mcpwm_comparator_event_callbacks_t sample_callbacks = {0};
+    sample_callbacks.on_reach = adc_sample_compare_callback;
+    ESP_ERROR_CHECK(mcpwm_comparator_register_event_callbacks(g_pwm.comparator_adc_sample,
+                                                              &sample_callbacks,
+                                                              NULL));
+
+    ESP_ERROR_CHECK(mcpwm_timer_enable(g_pwm.timer));
+    ESP_ERROR_CHECK(mcpwm_timer_start_stop(g_pwm.timer, MCPWM_TIMER_START_NO_STOP));
+}
+
+static void adc_sample_task(void *arg)
+{
+    uint32_t adc_sample_count = 0;
+    float current_ema_a = 0.0f;
+    bool current_ema_initialized = false;
+
+    (void)arg;
+
+    while (true) {
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+
+        int raw = 0;
+        esp_err_t err = adc_oneshot_read(g_adc_handle, ADC_INPUT_CHANNEL, &raw);
+        if (err != ESP_OK) {
+            continue;
+        }
+
+        float voltage = adc_raw_to_voltage(raw);
+        float current_raw_a = voltage / DRV8876_CS_VOLTS_PER_AMP;
+
+        if (!current_ema_initialized) {
+            current_ema_a = current_raw_a;
+            current_ema_initialized = true;
+        } else {
+            current_ema_a += CURRENT_EMA_ALPHA * (current_raw_a - current_ema_a);
+        }
+
+        portENTER_CRITICAL(&g_state_lock);
+        adc_sample_count++;
+        g_telemetry.time_ms = (uint32_t)(esp_timer_get_time() / 1000ULL);
+        g_telemetry.adc_sample_count = adc_sample_count;
+        g_telemetry.adc_raw = raw;
+        g_telemetry.adc_voltage = voltage;
+        g_telemetry.current_raw_a = current_raw_a;
+        g_telemetry.current_ema_a = current_ema_a;
+        g_telemetry.direction = g_direction;
+        g_telemetry.duty_cw = g_duty_cw;
+        g_telemetry.duty_ccw = g_duty_ccw;
+        portEXIT_CRITICAL(&g_state_lock);
+    }
+}
+
+static bool parse_direction(const char *text, motor_direction_t *direction)
+{
+    if (strcmp(text, "STOP") == 0) {
+        *direction = MOTOR_STOP;
+        return true;
+    }
+    if (strcmp(text, "CW") == 0) {
+        *direction = MOTOR_CW;
+        return true;
+    }
+    if (strcmp(text, "CCW") == 0) {
+        *direction = MOTOR_CCW;
+        return true;
+    }
+    return false;
+}
+
+static void handle_serial_command(char *line)
+{
+    char *command = strtok(line, ",");
+    char *direction_text = strtok(NULL, ",");
+    char *duty_text = strtok(NULL, ",");
+    motor_direction_t direction = MOTOR_STOP;
+
+    if (command == NULL || direction_text == NULL || duty_text == NULL) {
+        return;
+    }
+
+    if (strcmp(command, "SET") != 0 || !parse_direction(direction_text, &direction)) {
+        return;
+    }
+
+    uint32_t duty = clamp_duty((uint32_t)strtoul(duty_text, NULL, 10));
+    motor_set_output(direction, duty);
+    printf("ACK,%s,%lu\n", motor_direction_to_text(direction), (unsigned long)duty);
+}
+
+static void serial_command_poll(void)
+{
+    static char command_buffer[COMMAND_BUFFER_SIZE];
+    static size_t command_length = 0;
+    char received;
+
+    while (read(STDIN_FILENO, &received, 1) == 1) {
+        if (received == '\n' || received == '\r') {
+            if (command_length > 0) {
+                command_buffer[command_length] = '\0';
+                handle_serial_command(command_buffer);
+                command_length = 0;
+            }
+            continue;
+        }
+
+        if (command_length < COMMAND_BUFFER_SIZE - 1) {
+            command_buffer[command_length++] = received;
+        } else {
+            command_length = 0;
+        }
+    }
+}
+
+static telemetry_t telemetry_snapshot(void)
+{
+    telemetry_t snapshot;
+
+    portENTER_CRITICAL(&g_state_lock);
+    snapshot = g_telemetry;
+    portEXIT_CRITICAL(&g_state_lock);
+
+    return snapshot;
+}
+
+static void processing_print_header(void)
+{
+    printf("HEADER,time_ms,adc_raw,adc_voltage,current_raw_a,current_ema_a,direction_code,direction_text,"
+           "duty_cw,duty_ccw,adc_sample_count,pwm_frequency_hz,adc_sample_rate_hz,"
+           "adc_sample_tick,current_ema_alpha\n");
+}
+
+static void processing_print_telemetry(const telemetry_t *telemetry)
+{
+    printf("DATA,%lu,%d,%.3f,%.3f,%.3f,%d,%s,%lu,%lu,%lu,%lu,%lu,%lu,%.3f\n",
+           (unsigned long)telemetry->time_ms,
+           telemetry->adc_raw,
+           telemetry->adc_voltage,
+           telemetry->current_raw_a,
+           telemetry->current_ema_a,
+           (int)telemetry->direction,
+           motor_direction_to_text(telemetry->direction),
+           (unsigned long)telemetry->duty_cw,
+           (unsigned long)telemetry->duty_ccw,
+           (unsigned long)telemetry->adc_sample_count,
+           (unsigned long)PWM_FREQUENCY_HZ,
+           (unsigned long)ADC_SAMPLE_RATE_HZ,
+           (unsigned long)ADC_SAMPLING_COMPARE_TICKS,
+           CURRENT_EMA_ALPHA);
+    fflush(stdout);
+}
+
+void app_main(void)
+{
+    esp_log_level_set("*", ESP_LOG_NONE);
+
+    adc_init();
+    serial_command_init();
+
+    xTaskCreatePinnedToCore(adc_sample_task,
+                            "adc_sample_task",
+                            4096,
+                            NULL,
+                            10,
+                            &g_adc_task_handle,
+                            0);
+
+    mcpwm_init();
+    motor_set_output(MOTOR_STOP, 0);
+
+    processing_print_header();
+
+    while (true) {
+        serial_command_poll();
+        telemetry_t telemetry = telemetry_snapshot();
+        processing_print_telemetry(&telemetry);
+        vTaskDelay(pdMS_TO_TICKS(PROCESSING_PERIOD_MS));
+    }
+}
