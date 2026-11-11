@@ -1,0 +1,4 @@
+#pragma once
+#define ADC_CHANNEL_0 0
+#define ADC_CHANNEL_3 3
+#define ADC_CHANNEL_6 6

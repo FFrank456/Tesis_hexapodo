@@ -58,3 +58,6 @@ build/
 *.o
 *.obj
 *.a
+
+# ---------- Firmware: carpetas temporales para borrar ----------
+03-control/*/_to_delete/
