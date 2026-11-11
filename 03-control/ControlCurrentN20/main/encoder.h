@@ -7,10 +7,10 @@
 // The two channels are already included in x4: 7 * 4 * 100 = 2800 counts/output rev.
 // All position and speed conversion runs in the ESP32. Do not multiply the
 // returned counts by four again. Callers serialize this API with g_motor_lock.
-#define ENCODER_GPIO_A 18
-#define ENCODER_GPIO_B 19
-//#define ENCODER_GPIO_A 35
-//#define ENCODER_GPIO_B 25
+// GPIO35 es solo entrada y no tiene pull-up interno: requiere pull-up externo
+// si el encoder tiene salidas open-collector.
+#define ENCODER_GPIO_A 35
+#define ENCODER_GPIO_B 25
 #define ENCODER_SIGN 1
 #define ENCODER_DATA_VERSION 1U
 #define ENCODER_PULSES_PER_MOTOR_REV 7U

@@ -127,7 +127,7 @@ static void adc_task(void *arg)
                     }
                     /* Assign only code zero to 0 V before averaging; preserve SDK voltage
                      * in diagnostics. This is an assignment, not calibration. */
-                    float amps=raw==0 ? 0.0f : mv/2490.0f;
+                    float amps=raw==0 ? 0.0f : mv/(1000.0f*SENSE_CS_VOLTS_PER_AMP);
                     raw_sum+=(uint32_t)raw;
                     processed_mv_sum+=raw==0 ? 0U : (uint32_t)mv;
                     block_accepted++;
@@ -146,7 +146,7 @@ static void adc_task(void *arg)
                 } else if (block_accepted==SENSE_DMA_FRAME_SAMPLES) {
                     s.adc_raw_mean=(float)raw_sum/SENSE_DMA_FRAME_SAMPLES;
                     s.adc_voltage_mean=(float)processed_mv_sum/(1000.0f*SENSE_DMA_FRAME_SAMPLES);
-                    s.current_mean_a=s.adc_voltage_mean/2.49f;
+                    s.current_mean_a=s.adc_voltage_mean/SENSE_CS_VOLTS_PER_AMP;
                     s.dma_block_samples=block_accepted;
                 }
                 portEXIT_CRITICAL(&lock);

@@ -282,7 +282,7 @@ void drawControls() {
   runButton.draw(); stopButton.draw(); exportButton.draw();
   fill(220); textSize(15); text("Muestras guardadas: "+samples.size(),28,518); zeroButton.draw();
   fill(175); textSize(13);
-  text("Encoder A: GPIO18 | B: GPIO19 | conteo x4\nPosicion: rad | velocidad: rad/s, recibidas del ESP32.\nCada secuencia fija su referencia en el firmware.\n\nEnter: terminar edicion. Delete: vaciar campo.\nEl ESP32 ejecuta y termina la secuencia por tiempo.\nRegistro aprox. 100 Hz; usa los tiempos ESP32.",28,588,444,115);
+  text("Encoder A: GPIO35 | B: GPIO25 | conteo x4\nPosicion: rad | velocidad: rad/s, recibidas del ESP32.\nCada secuencia fija su referencia en el firmware.\n\nEnter: terminar edicion. Delete: vaciar campo.\nEl ESP32 ejecuta y termina la secuencia por tiempo.\nRegistro aprox. 100 Hz; usa los tiempos ESP32.",28,588,444,115);
 }
 
 void drawMeasurements() {

@@ -97,7 +97,7 @@ V_procesado[k] = V_calibrado_SDK(raw[k])  si raw[k] > 0
 
 adc_raw_mean     = suma(raw[k]) / 200
 adc_voltage_mean = suma(V_procesado[k]) / 200
-current_mean_a   = adc_voltage_mean / 2.49
+current_mean_a   = adc_voltage_mean / 3.0   (SENSE_CS_VOLTS_PER_AMP)
 ```
 
 La conversión se aplica a cada muestra antes de promediar. No hay filtro recursivo ni memoria entre bloques. Cada promedio utiliza exclusivamente las 200 muestras de su bloque; un cambio de PWM puede quedar dentro de ese intervalo.
@@ -106,7 +106,7 @@ El voltaje SDK de la última muestra se conserva como diagnóstico en `adc_volta
 
 Solo un bloque completo válido publica sus medias. Saturación, error de calibración, datos mal formados, antigüedad excesiva o pérdida DMA producen medias NaN y `dma_block_samples=0`. Processing muestra huecos y no reutiliza una medida antigua como válida. Las pérdidas DMA reinician las colas y provocan STOP desde la tarea de control.
 
-`current_mean_a` representa **CS promedio escalado con 2.49 V/A**. La calibración ADC y la ganancia física CS/corriente siguen pendientes. En avance/coast, IPROPI no observa toda la corriente de recirculación: esta magnitud no equivale automáticamente a la corriente media del devanado ni al torque. Referencia: [DRV8876, sección 7.3.3.1](https://www.ti.com/lit/ds/symlink/drv8876.pdf).
+`current_mean_a` representa **CS promedio escalado con 3.0 V/A** (MOD_DRV: R_IPROPI = 3 kΩ × 1000 µA/A; la placa anterior usaba 2.49 V/A). La calibración ADC y la ganancia física CS/corriente siguen pendientes. En avance/coast, IPROPI no observa toda la corriente de recirculación: esta magnitud no equivale automáticamente a la corriente media del devanado ni al torque. Referencia: [DRV8876, sección 7.3.3.1](https://www.ti.com/lit/ds/symlink/drv8876.pdf).
 
 El cálculo de bloques es interno, nominalmente a 1 kHz. La telemetría a 100 Hz envía el último resumen: **no transmite las 200 muestras ni registra todos los bloques de 1 ms**. No debe confundirse la tasa ADC, la consulta de medidas y la frecuencia del CSV.
 
@@ -149,7 +149,7 @@ Los tres sketches requieren **DATA de 59 campos**, contando `DATA` como índice 
 | 42–44 | Descartes y fase | Descartes por ventana/calidad y validación de fase |
 | 45 | `adc_raw_mean` | Media de cuentas ADC |
 | 46 | `adc_voltage_mean` | Media de voltajes procesados, V |
-| 47 | `current_mean_a` | Medida principal: media CS / 2.49, A equivalentes |
+| 47 | `current_mean_a` | Medida principal: media CS / 3.0, A equivalentes |
 | 48 | `dma_block_samples` | 200 válido; 0 inválido |
 | 49 | `encoder_version` | 1 |
 | 50 | `encoder_time_us` | Tiempo de lectura PCNT |

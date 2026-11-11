@@ -13,6 +13,8 @@
 #define SENSE_DMA_FRAME_SAMPLES 200U
 #define SENSE_DMA_STALE_US 10000
 #define SENSE_DATA_VERSION 6U
+/* MOD_DRV: R_IPROPI = 3 kOhm, A_IPROPI = 1000 uA/A -> 3.0 V/A (antes 2.49). */
+#define SENSE_CS_VOLTS_PER_AMP 3.0f
 
 typedef enum {
     CURRENT_UNINITIALIZED = 0,
@@ -43,7 +45,7 @@ static inline bool current_sample_usable(current_status_t status)
 typedef struct {
     int raw;                       /* -1: no conversion attempted/succeeded */
     float voltage;
-    float current_a;               /* Calibrated CS /2.49; not winding mean current. */
+    float current_a;               /* Calibrated CS / SENSE_CS_VOLTS_PER_AMP; not winding mean current. */
     bool calibrated;               /* This individual voltage conversion succeeded. */
     bool converted;
     current_status_t status;
@@ -54,7 +56,7 @@ typedef struct {
      * assign raw==0 to 0 V before averaging. No PWM phase selection. */
     float adc_raw_mean;
     float adc_voltage_mean;
-    float current_mean_a;          /* Mean CS /2.49; not winding mean current. */
+    float current_mean_a;          /* Mean CS / SENSE_CS_VOLTS_PER_AMP; not winding mean current. */
     uint32_t dma_block_samples;     /* 200 for a valid mean, 0 with NaN on error. */
     uint32_t total_samples;
     uint32_t overflows;

@@ -97,10 +97,10 @@ int main(void)
     CHECK(latest.dma_block_samples==200);
     CHECK(fabsf(latest.adc_raw_mean-(1000+199*249)/200.0f)<1e-5f);
     CHECK(fabsf(latest.adc_voltage_mean-(1000+199*249)/200000.0f)<1e-6f);
-    CHECK(fabsf(latest.current_mean_a-latest.adc_voltage_mean/2.49f)<1e-6f);
+    CHECK(fabsf(latest.current_mean_a-latest.adc_voltage_mean/SENSE_CS_VOLTS_PER_AMP)<1e-6f);
     CHECK(latest.current_mean_a>latest.current_a); /* Includes the first sample. */
     run(0,149,0,1); CHECK(latest.status==CURRENT_CONTINUOUS && latest.accepted_samples==200);
-    CHECK(fabsf(latest.current_mean_a-.149f/2.49f)<1e-6f); /* No ON/OFF or floor censor. */
+    CHECK(fabsf(latest.current_mean_a-.149f/SENSE_CS_VOLTS_PER_AMP)<1e-6f); /* No ON/OFF or floor censor. */
     run(1000,150,0,1); CHECK(latest.status==CURRENT_CONTINUOUS && latest.accepted_samples==200);
     millivolts[0]=142; /* Reproduce real SDK intercept even at raw zero. */
     run(2000,0,0,1);
@@ -117,14 +117,14 @@ int main(void)
     CHECK(latest.status==CURRENT_CONTINUOUS_ZERO_ASSIGNED && latest.raw==0);
     CHECK(latest.dma_block_samples==200 && fabsf(latest.adc_raw_mean-124.5f)<1e-6f);
     CHECK(fabsf(latest.adc_voltage_mean-.250f)<1e-6f);
-    CHECK(fabsf(latest.current_mean_a-.250f/2.49f)<1e-6f);
+    CHECK(fabsf(latest.current_mean_a-.250f/SENSE_CS_VOLTS_PER_AMP)<1e-6f);
     float pulse_mean=latest.current_mean_a;
     run(600,249,6,1);
     CHECK(fabsf(latest.current_mean_a-pulse_mean)<1e-6f);
     CHECK(latest.status==CURRENT_CONTINUOUS && latest.raw==249);
     millivolts[249]=249;
     run(2000,249,0,1);
-    CHECK(fabsf(latest.current_mean_a-.1f)<1e-6f); /* No previous-block samples in mean. */
+    CHECK(fabsf(latest.current_mean_a-.249f/SENSE_CS_VOLTS_PER_AMP)<1e-6f); /* No previous-block samples in mean. */
     run(600,249,7,1); /* One saturated sample invalidates the whole block. */
     CHECK(latest.status==CURRENT_ADC_SATURATED && latest.accepted_samples==0);
     CHECK(latest.rejected_quality==200 && latest.dma_block_samples==0);

@@ -27,9 +27,11 @@
  * ControlCurrentN20 - MCPWM 10 kHz y media ADC DMA continua de 200 muestras
  *
  * Hardware:
- * - GPIO27 -> IN1/PH del DRV8876: PWM para giro horario.
- * - GPIO26 -> IN2/EN del DRV8876: PWM para giro antihorario.
- * - GPIO32 -> CS/IPROPI del DRV8876: voltaje proporcional a corriente.
+ * - GPIO26 -> EN/IN1 del DRV8876: PWM para giro horario.
+ * - GPIO27 -> PH/IN2 del DRV8876: PWM para giro antihorario.
+ * - GPIO32 -> IPROPI del DRV8876 (ADC1_CH4): voltaje proporcional a corriente.
+ * - GPIO5  -> nFAULT del DRV8876 (open-drain, activo en bajo).
+ * - GPIO35/GPIO25 -> Encoder A/B.
  *
  * Estructura:
  * 1. MCPWM genera los dos PWM desde el mismo timer.
@@ -43,8 +45,9 @@
  * La corriente publicada para el sensado es la media de cada bloque DMA completo.
  */
 
-#define PWM_GPIO_CW                         27
-#define PWM_GPIO_CCW                        26
+#define PWM_GPIO_CW                         26  /* EN/IN1 */
+#define PWM_GPIO_CCW                        27  /* PH/IN2 */
+#define DRV_NFAULT_GPIO                     5   /* nFAULT, activo en bajo */
 
 #define PWM_FREQUENCY_HZ                    10000U
 #define PWM_PERIOD_TICKS                    SENSE_PWM_PERIOD_TICKS
@@ -162,6 +165,7 @@ static int64_t g_output_changed_us;
 static current_status_t g_pending_current_fault;
 static bool g_pending_speed_fault;
 static bool g_pending_position_fault;
+static bool g_pending_drv_fault;
 static bool g_position_reference_set;
 static uint32_t g_position_reference_id;
 static position_pi_t g_position={.kp=POSITION_KP_INITIAL,.ki=POSITION_KI_INITIAL,
@@ -577,6 +581,11 @@ static void adc_sample_task(void *arg)
         bool stop_for_sensing = current.status == CURRENT_ADC_ERROR || current.status == CURRENT_DMA_OVERFLOW;
         stop_for_sensing |= current.overflows != previous_dma_overflows;
         previous_dma_overflows=current.overflows;
+        bool drv_fault = gpio_get_level(DRV_NFAULT_GPIO) == 0;
+        if (drv_fault) {
+            stop_for_sensing = true;
+            g_pending_drv_fault = true;
+        }
         motor_direction_t pid_direction = MOTOR_STOP;
         float pid_output_percent = 0.0f;
 
@@ -693,7 +702,7 @@ static void adc_sample_task(void *arg)
 
         if (stop_for_sensing) {
             /* Emit ERR from the UART task, never block this task on printf. */
-            if (!g_pending_speed_fault && !g_pending_position_fault && (duty_ticks > 0 || g_control_mode != CONTROL_MODE_OPEN))
+            if (!drv_fault && !g_pending_speed_fault && !g_pending_position_fault && (duty_ticks > 0 || g_control_mode != CONTROL_MODE_OPEN))
                 g_pending_current_fault = valid ? CURRENT_OUTPUT_SETTLING : current.status;
             control_stop();
         } else if (apply_pid_output) {
@@ -1191,6 +1200,15 @@ void app_main(void)
                             0);
     configASSERT(created == pdPASS);
 
+    gpio_config_t nfault_config = {
+        .pin_bit_mask = 1ULL << DRV_NFAULT_GPIO,
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    ESP_ERROR_CHECK(gpio_config(&nfault_config));
+
     mcpwm_init();
     motor_set_output(MOTOR_STOP, 0);
 
@@ -1201,12 +1219,14 @@ void app_main(void)
     while (true) {
         serial_command_poll();
         xSemaphoreTake(g_motor_lock, portMAX_DELAY);
+        bool drv_fault=g_pending_drv_fault;g_pending_drv_fault=false;
         bool position_fault=g_pending_position_fault;g_pending_position_fault=false;
         bool speed_fault=g_pending_speed_fault;
         g_pending_speed_fault=false;
         current_status_t fault = g_pending_current_fault;
         g_pending_current_fault = CURRENT_UNINITIALIZED;
         xSemaphoreGive(g_motor_lock);
+        if(drv_fault) printf("ERR,DRV_NFAULT,STOP\n");
         if(position_fault) printf("ERR,POSITION_FEEDBACK,STOP\n");
         if (speed_fault) printf("ERR,SPEED_FEEDBACK,STOP\n");
         if (fault != CURRENT_UNINITIALIZED) printf("ERR,CURRENT_SENSE,%d,STOP\n", (int)fault);
