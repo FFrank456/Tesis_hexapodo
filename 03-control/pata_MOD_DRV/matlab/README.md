@@ -2,7 +2,7 @@
 
 Calcula la **fricción**, la **inercia** y la **gravedad** de cada articulación (coxa, fémur, tibia) a partir de los CSV que exporta el dashboard. Con eso sugiere los comandos del firmware:
 - ganancias del lazo de velocidad (`SPI`) y de posición (`PPI`);
-- compensaciones (`FRIC`, `GRAV`);
+- compensaciones (`FRICI`, `GRAV`);
 - límites (`ILIMIT`, `PLIMIT`).
 
 Funciona en MATLAB y en GNU Octave, sin toolboxes, tanto con `pata_MOD_DRV` como con `pata_banco1`.
@@ -19,7 +19,7 @@ Funciona en MATLAB y en GNU Octave, sin toolboxes, tanto con `pata_MOD_DRV` como
 | Parámetro | Depende de | Se mide |
 |---|---|---|
 | PI de corriente | Motor + driver | Una vez (ya está identificado) |
-| Fricción (`FRIC`, Ic, b) | Motor + reductora (varía por unidad) | **Por motor**, montado |
+| Fricción (`FRICI`: Ic, Is; b) | Motor + reductora (varía por unidad) | **Por motor**, montado |
 | Inercia (Jeq) | Eslabón y lo que cuelga de él | **Por articulación** (el fémur, en 2–3 posturas de la tibia) |
 | Gravedad (`GRAV`, θ₀) | Peso y postura | **Por articulación** (fémur y tibia) |
 | `SPI`, `PPI` | Inercia + fricción | **Por articulación** |
@@ -41,7 +41,7 @@ $$I = J_{eq}\,\alpha + I_c\,\text{sign}(\omega) + b\,\omega + G\cos(\theta + \th
 **Ganancias:** la planta corriente → velocidad es $\omega/I = 1/(J_{eq}s + b)$.
 - **Lazo de velocidad:** el PI cancela el polo de la planta ($K_i/K_p = b/J_{eq}$) y fija el ancho de banda: $K_p = J_{eq}\,\omega_c$, $K_i = b\,\omega_c$. Por defecto, $f_c$ = 3 Hz.
 - **Lazo de posición:** solo P, con $K_p = \omega_c/4$.
-- **Fricción estática (`FRIC`):** 70 % del PWM de arranque, descontando la ayuda o el estorbo de la gravedad en ese instante.
+- **Fricción (`FRICI,Ic,Is`):** el firmware la suma a la **referencia de corriente** en Velocidad y Posición: 80 % de Ic mientras la articulación se mueve en el sentido pedido y, si está pegada, un empujón que sube de Ic a Is en 150 ms. Is es la corriente de arranque descontando la gravedad. (El antiguo `FRIC`, en % de PWM, se suma después del lazo de corriente y ese lazo lo cancela; déjalo en 0.)
 
 ## Ensayo automático (recomendado)
 
@@ -131,7 +131,8 @@ Comandos sugeridos:
   M2,ILIMIT,0.300
   M2,PLIMIT,10.00,15.4,0.02
   M2,GRAV,0.1205,0.0916
-  M2,FRIC,7.2
+  M2,FRIC,0
+  M2,FRICI,0.0400,0.0801
 ```
 
 Los comandos se copian en el **cuadro de comando manual** del dashboard (panel "Mensajes del ESP32"), con el motor en STOP. Límite CS y Techo PWM se ponen además en sus campos de la pestaña Posición, porque **Ir a posición** los vuelve a enviar.

@@ -54,8 +54,12 @@ void encoder_set_sign(int m, int s) { sign_[m]=s; ref_id[m]++; }
 int encoder_get_sign(int m) { return sign_[m]; }
 void encoder_init(void) {}
 static float amps[3];
+static int bad_blocks[3]; /* next N current blocks of motor m come back saturated */
 current_sample_t current_sense_read(int m)
 {
+    if (bad_blocks[m] > 0) { bad_blocks[m]--;
+        return (current_sample_t){ .status=CURRENT_ADC_SATURATED, .dma_block_samples=0,
+            .current_mean_a=NAN, .sample_time_us=now_us, .calibrated=true, .raw=4095 }; }
     return (current_sample_t){ .status=CURRENT_CONTINUOUS, .dma_block_samples=SENSE_DMA_FRAME_SAMPLES,
         .current_mean_a=amps[m], .sample_time_us=now_us, .calibrated=true, .raw=100 };
 }
@@ -86,6 +90,8 @@ static const char *cmd(const char *text)
 }
 
 static double grav_dist[3]; /* gravity as an equivalent speed bias, rad/s * cos(pos) */
+static float stick_pwm[3];  /* static friction: a still axis needs |duty| > this to move */
+static float drag_zone[3];  /* extra PWM lost to friction while inside 0.4..0.6 rad (PLA bushing) */
 static void step(int ms)
 {
     control_rates_t rates = {0};
@@ -96,7 +102,16 @@ static void step(int ms)
             float duty = g_motors[i].duty_percent;
             double g = grav_dist[i] * cos(pos[i] - ref_pos[i]);
             if (g_motors[i].direction == MOTOR_BRAKE) spd[i] = spd[i] * 0.8 - g * 0.02; /* brake: slides under load */
-            else spd[i] += (duty * 0.1 - g - spd[i]) * 0.05;
+            else if (stick_pwm[i] > 0 && fabs(spd[i]) < 0.02 && fabsf(duty) < stick_pwm[i]) spd[i] = 0; /* stuck */
+            else {
+                double rel = pos[i] - ref_pos[i];
+                float eff = duty;
+                if (drag_zone[i] > 0 && rel > 0.4 && rel < 0.6) {   /* hard zone: sticks unless pushed harder */
+                    eff = fabsf(duty) > drag_zone[i] ? copysignf(fabsf(duty) - drag_zone[i], duty) : 0;
+                }
+                if (drag_zone[i] > 0 && eff == 0 && fabs(spd[i]) < 0.05 && rel > 0.4 && rel < 0.6) spd[i] = 0;
+                else spd[i] += (eff * 0.1 - g - spd[i]) * 0.05;
+            }
             pos[i] += spd[i] * 0.001;
             amps[i] = fabsf(duty) / 100.0f * 0.3f;
         }
@@ -310,6 +325,129 @@ int main(void)
     fprintf(stderr, "  bajando con gravedad: velocidad max=%.2f rad/s (vmax 2)\n", max_down);
     CHECK(max_down < 3.0 && fabs(pos[0] - ref_pos[0] + 0.5) < 0.05);
     cmd("STOP"); grav_dist[0] = 0;
+
+    /* FRICI: friction feed-forward in the current reference. */
+    CHECK(strcmp(cmd("M1,FRICI,0.03,0.13"), "M1,ACK,FRICI,0.0300,0.1300\n") == 0);
+    CHECK(g_motors[0].friction_ic_a == 0.03f && g_motors[0].friction_is_a == 0.13f);
+    CHECK(strstr(cmd("M1,FRICI,0.2,0.1"), "ERR,FRICI") != NULL);   /* Is < Ic */
+    CHECK(strstr(cmd("M1,FRICI,0.1,0.6"), "ERR,FRICI") != NULL);   /* > 0.5 A */
+    CHECK(strstr(cmd("M1,FRICI,0.1"), "ERR,FRICI") != NULL);
+    { motor_t *m = &g_motors[0]; encoder_sample_t e = { .speed_valid = true, .output_speed_rad_s = 0 };
+      m->control_direction = MOTOR_CW; m->speed.reference_rad_s = 1.0f; m->friction_stuck_since_us = 0;
+      CHECK(fabsf(friction_feedforward(m, &e, 1000000) - 0.03f) < 1e-6f && m->friction_breakaway);      /* stuck: starts at Ic */
+      CHECK(fabsf(friction_feedforward(m, &e, 1000000 + 75000) - 0.08f) < 1e-4f);                         /* half ramp */
+      CHECK(fabsf(friction_feedforward(m, &e, 1000000 + 150000) - 0.13f) < 1e-4f);                        /* Is at the ramp time */
+      { float lim = m->speed.current_limit_a, cap = fminf(0.26f, lim);
+        CHECK(fabsf(friction_feedforward(m, &e, 1000000 + 2000000) - cap) < 1e-4f); }                     /* keeps rising, capped */
+      e.output_speed_rad_s = 0.5f;
+      CHECK(fabsf(friction_feedforward(m, &e, 1500000) - 0.03f) < 1e-6f && !m->friction_breakaway);      /* moving: Ic */
+      e.output_speed_rad_s = -0.5f;
+      CHECK(friction_feedforward(m, &e, 1600000) == 0.0f);                                                /* moving backwards */
+      m->control_direction = MOTOR_CCW;
+      CHECK(fabsf(friction_feedforward(m, &e, 1700000) - 0.03f) < 1e-6f);                                 /* CCW, moving CCW */
+      m->speed.reference_rad_s = 0;
+      CHECK(friction_feedforward(m, &e, 1800000) == 0.0f && m->friction_stuck_since_us == 0);             /* no motion asked */
+      m->control_direction = MOTOR_CW; }
+
+    /* Sticky axis (needs 40 % PWM = 0.12 A to move) with slow speed gains: the
+     * breakaway push reaches the target much sooner than the speed integrator alone. */
+    double t_reach[2];
+    for (int run = 0; run < 2; ++run) {
+        cmd("M1,STOP"); spd[0] = 0; step(300); stick_pwm[0] = 40;
+        cmd("M1,ENCODER,ZERO"); cmd("M1,GRAV,0,0"); cmd("M1,FRIC,0");
+        cmd(run ? "M1,FRICI,0.03,0.13" : "M1,FRICI,0,0");
+        cmd("M1,ILIMIT,0.4"); cmd("M1,LIMIT,0,100"); cmd("M1,SPI,0.0284,0.01392"); cmd("M1,PPI,2,0"); cmd("M1,PLIMIT,2,15,0.01");
+        cmd("M1,PREF,0.3"); CHECK(strncmp(cmd("M1,MODE,POSITION"), "M1,ACK,MODE,POSITION", 20) == 0);
+        t_reach[run] = -1;
+        for (int k = 0; k < 15000; ++k) {
+            step(1);
+            if (t_reach[run] < 0 && fabs(pos[0] - ref_pos[0] - 0.3) < 0.03) t_reach[run] = k / 1000.0;
+        }
+        fprintf(stderr, "  eje con fricción estática, %s: llega en %.2f s, error final %.3f rad\n",
+                run ? "con FRICI" : "sin FRICI", t_reach[run], pos[0] - ref_pos[0] - 0.3);
+    }
+    CHECK(t_reach[1] > 0 && (t_reach[0] < 0 || t_reach[1] < 0.5 * t_reach[0]));
+    /* Static friction above Is (60 % PWM = 0.18 A vs Is 0.10): the push keeps
+     * rising until it breaks loose, and with no integral wound up the joint
+     * does not shoot past vmax (2 rad/s). */
+    { cmd("M1,STOP"); spd[0] = 0; step(300); stick_pwm[0] = 60;
+      cmd("M1,ENCODER,ZERO"); cmd("M1,FRICI,0.03,0.10"); cmd("M1,ILIMIT,0.4"); cmd("M1,SPI,0.0284,0.05");
+      cmd("M1,PLIMIT,2,15,0.01"); cmd("M1,PREF,1.0"); CHECK(strncmp(cmd("M1,MODE,POSITION"), "M1,ACK,MODE,POSITION", 20) == 0);
+      double peak = 0, tr = -1;
+      for (int k = 0; k < 8000; ++k) { step(1); if (fabs(spd[0]) > peak) peak = fabs(spd[0]);
+        if (tr < 0 && fabs(pos[0] - ref_pos[0] - 1.0) < 0.03) tr = k / 1000.0; }
+      fprintf(stderr, "  fricción estática > Is: llega en %.2f s, velocidad pico %.2f rad/s (vmax 2)\n", tr, peak);
+      CHECK(tr > 0 && peak < 3.0); }
+    { telemetry_t t; telemetry_snapshot(0, &t); CHECK(t.friction_ic_a == 0.03f && t.friction_is_a == 0.10f); }
+    cmd("STOP"); stick_pwm[0] = 0; cmd("M1,FRICI,0,0");
+
+    /* FMAP: parsing, interpolation and use in the feed-forward. */
+    CHECK(strcmp(cmd("M1,FMAP,+,0,0.1,0.05,0.10,0.20"), "M1,ACK,FMAP,+,3,0.000,0.100\n") == 0);
+    CHECK(fabsf(fmap_eval(&g_motors[0].fmap[0], 0.05) - 0.075f) < 1e-5f);
+    CHECK(fabsf(fmap_eval(&g_motors[0].fmap[0], -1.0) - 0.05f) < 1e-6f && fabsf(fmap_eval(&g_motors[0].fmap[0], 5.0) - 0.20f) < 1e-6f);
+    CHECK(strstr(cmd("M1,FMAP,+,0,0.1,0.6,0.1"), "ERR,FMAP") != NULL);   /* > 0.5 A */
+    CHECK(strstr(cmd("M1,FMAP,x,0,0.1,0.1,0.1"), "ERR,FMAP") != NULL);
+    CHECK(strstr(cmd("M1,FMAP,+,0,0.1,0.1"), "ERR,FMAP") != NULL);        /* one value */
+    { motor_t *m = &g_motors[0]; encoder_sample_t e = { .speed_valid = true, .output_speed_rad_s = 0.5f, .output_position_rad = 0.15 };
+      cmd("M1,FRICI,0.03,0.06"); m->control_direction = MOTOR_CW; m->speed.reference_rad_s = 1.0f;
+      CHECK(fabsf(friction_feedforward(m, &e, 1000) - 0.15f) < 1e-5f);     /* moving +: map at 0.15 rad */
+      m->control_direction = MOTOR_CCW; e.output_speed_rad_s = -0.5f;
+      CHECK(fabsf(friction_feedforward(m, &e, 2000) - 0.03f) < 1e-6f);     /* no map for -: Ic */
+      m->control_direction = MOTOR_CW; m->speed.reference_rad_s = 0; }
+    CHECK(strcmp(cmd("M1,FMAP,CLEAR"), "M1,ACK,FMAP,CLEAR\n") == 0 && !g_motors[0].fmap[0].valid);
+
+    /* GRAV2: second gravity term coupled to another joint (tibia on the femur). */
+    CHECK(strcmp(cmd("M3,GRAV2,0.05,0.1,2,1"), "M3,ACK,GRAV2,0.0500,0.1000,2,1.00\n") == 0);
+    CHECK(strstr(cmd("M3,GRAV2,0.05,0.1,3,1"), "ERR,GRAV2") != NULL);   /* itself */
+    CHECK(strstr(cmd("M3,GRAV2,0.05,0.1,1.5,1"), "ERR,GRAV2") != NULL); /* not an index */
+    CHECK(strstr(cmd("M3,GRAV2,0.05,0.1,2"), "ERR,GRAV2") != NULL);
+    g_motors[1].last_position_rad = 0.4;
+    CHECK(fabsf(gravity_hold_a(&g_motors[2], 0.2) - 0.05f * cosf(0.2f + 0.4f + 0.1f)) < 1e-6f && has_gravity(&g_motors[2]));
+    cmd("M3,GRAV,0.02,0");
+    CHECK(fabsf(gravity_hold_a(&g_motors[2], 0.2) - (0.02f * cosf(0.2f) + 0.05f * cosf(0.7f))) < 1e-6f);
+    CHECK(strcmp(cmd("M3,GRAV2,0,0,0,0"), "M3,ACK,GRAV2,0.0000,0.0000,0,0.00\n") == 0);
+    cmd("M3,GRAV,0,0"); CHECK(!has_gravity(&g_motors[2]) && gravity_hold_a(&g_motors[2], 0.2) == 0.0f);
+
+    /* PLA bushing: a hard zone at 0.4..0.6 rad eats 35 % PWM. With the map the
+     * joint crosses it without stalling; with a single Ic it hangs there. */
+    double t_cross[2];
+    for (int run = 0; run < 2; ++run) {
+        cmd("M1,STOP"); spd[0] = 0; step(300); drag_zone[0] = 35;
+        cmd("M1,ENCODER,ZERO"); cmd("M1,FRICI,0.03,0.06"); cmd("M1,FMAP,CLEAR");
+        if (run) cmd("M1,FMAP,+,0,0.1,0.03,0.03,0.03,0.08,0.13,0.13,0.08,0.03,0.03,0.03,0.03");
+        cmd("M1,ILIMIT,0.4"); cmd("M1,SPI,0.0284,0.01392"); cmd("M1,PPI,2,0"); cmd("M1,PLIMIT,1,10,0.01");
+        cmd("M1,PREF,1.0"); CHECK(strncmp(cmd("M1,MODE,POSITION"), "M1,ACK,MODE,POSITION", 20) == 0);
+        t_cross[run] = -1;
+        for (int k = 0; k < 15000; ++k) { step(1); if (t_cross[run] < 0 && pos[0] - ref_pos[0] > 0.65) t_cross[run] = k / 1000.0; }
+        fprintf(stderr, "  zona dura de PLA (0.4-0.6 rad), %s: la cruza en %.2f s\n", run ? "con FMAP" : "sin FMAP", t_cross[run]);
+    }
+    CHECK(t_cross[1] > 0 && (t_cross[0] < 0 || t_cross[1] < 0.6 * t_cross[0]));
+    cmd("STOP"); drag_zone[0] = 0; cmd("M1,FMAP,CLEAR"); cmd("M1,FRICI,0,0");
+
+    /* Isolated saturated CS blocks during POSITION: ride through (keep PWM), a
+     * longer outage still stops the motor. */
+    cmd("M1,ENCODER,ZERO"); cmd("M1,SPI,0.0284,0.01392"); cmd("M1,PPI,2,0"); cmd("M1,PREF,1.0");
+    CHECK(strncmp(cmd("M1,MODE,POSITION"), "M1,ACK,MODE,POSITION", 20) == 0);
+    step(300);
+    float duty_before = g_motors[0].duty_percent;
+    bad_blocks[0] = CURRENT_RIDE_THROUGH_BLOCKS; step(CURRENT_RIDE_THROUGH_BLOCKS);
+    CHECK(g_motors[0].control_mode == CONTROL_MODE_POSITION && g_motors[0].duty_percent == duty_before && duty_before != 0);
+    step(5);
+    CHECK(g_motors[0].control_mode == CONTROL_MODE_POSITION && g_motors[0].current_invalid_streak == 0 &&
+          g_motors[0].current_ride_through_total == CURRENT_RIDE_THROUGH_BLOCKS);
+    bad_blocks[0] = CURRENT_RIDE_THROUGH_BLOCKS + 1; step(CURRENT_RIDE_THROUGH_BLOCKS + 1);
+    CHECK(g_motors[0].control_mode == CONTROL_MODE_OPEN && g_motors[0].duty_percent == 0);
+    fprintf(stderr, "  CS saturado: %d bloques sueltos se sostienen, %d detienen el motor\n",
+            CURRENT_RIDE_THROUGH_BLOCKS, CURRENT_RIDE_THROUGH_BLOCKS + 1);
+    CHECK(g_motors[0].direction == MOTOR_STOP);               /* no gravity: coast */
+    cmd("STOP"); bad_blocks[0] = 0;
+    /* With GRAV the joint is left braked after the fault; STOP releases it. */
+    spd[0] = 0; step(300); cmd("M1,GRAV,0.05,0"); cmd("M1,HOLD,BRAKE"); cmd("M1,PREF,1.5");
+    CHECK(strncmp(cmd("M1,MODE,POSITION"), "M1,ACK,MODE,POSITION", 20) == 0);
+    step(300); bad_blocks[0] = CURRENT_RIDE_THROUGH_BLOCKS + 1; step(CURRENT_RIDE_THROUGH_BLOCKS + 1); step(50);
+    CHECK(g_motors[0].control_mode == CONTROL_MODE_OPEN && g_motors[0].direction == MOTOR_BRAKE);
+    cmd("M1,STOP"); CHECK(g_motors[0].direction == MOTOR_STOP);
+    cmd("M1,GRAV,0,0"); cmd("STOP");
 
     /* Telemetry line layout: T + time + selected + 11 per motor. */
     fflush(stdout);

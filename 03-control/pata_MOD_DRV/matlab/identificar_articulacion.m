@@ -265,8 +265,20 @@ function G = ganancias(P, op, S)
         end
     end
     if isfinite(G.fric)
-        G.fric = min(70, G.fric);
-        G.comandos{end + 1} = sprintf('%s,FRIC,%.1f', m, G.fric);
+        G.fric = min(70, G.fric);   % referencia (PWM); el firmware compensa en corriente:
+    end
+    % Compensación en la referencia de corriente (FRICI,Ic,Is): 80 % de Ic mientras se
+    % mueve y empujón hasta Is mientras está pegada. Sin arranques medidos, Is = 2*Ic.
+    if C.valido && C.Ic > 0
+        G.frici_ic = 0.8 * C.Ic;
+        if isfield(G, 'is_a') && isfinite(G.is_a) && G.is_a > G.frici_ic
+            G.frici_is = G.is_a;
+        else
+            G.frici_is = 2 * C.Ic;
+        end
+        G.frici_ic = min(0.5, G.frici_ic); G.frici_is = min(0.5, max(G.frici_is, G.frici_ic));
+        G.comandos{end + 1} = sprintf('%s,FRIC,0', m);
+        G.comandos{end + 1} = sprintf('%s,FRICI,%.4f,%.4f', m, G.frici_ic, G.frici_is);
     end
 end
 

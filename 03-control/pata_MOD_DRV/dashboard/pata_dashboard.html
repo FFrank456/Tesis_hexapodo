@@ -143,10 +143,10 @@ canvas { width: 100%; display: block; background: var(--panel2); border-radius: 
         <label class="atl">Jeq (A·s²/rad)<input type="number" step="0.0001" id="tn_J"></label>
         <label class="atl">b (A·s/rad)<input type="number" step="0.0005" id="tn_b"></label>
         <label class="atl">Ic Coulomb (A)<input type="number" step="0.005" id="tn_Ic"></label>
-        <label class="atl">Is estática (A)<input type="number" step="0.005" id="tn_Is"></label>
+        <label class="atl" title="Corriente de arranque observada en lazo cerrado (sin gravedad)">Is arranque (A)<input type="number" step="0.005" id="tn_Is"></label>
         <label class="atl">G (A)<input type="number" step="0.005" id="tn_G"></label>
         <label class="atl">θ₀ (rad)<input type="number" step="0.05" id="tn_th0"></label>
-        <label class="atl">FRIC (%)<input type="number" step="1" id="tn_fric"></label>
+        <label class="atl" title="Porcentaje de Ic que se compensa (80 % evita que oscile)">Comp. Coulomb (%)<input type="number" step="5" min="0" max="100" id="tn_kc" value="80"></label>
         <label class="atl">ILIMIT (A)<input type="number" step="0.01" id="tn_ilim"></label>
       </fieldset>
       <fieldset><legend>Desempeño deseado</legend>
@@ -159,7 +159,7 @@ canvas { width: 100%; display: block; background: var(--panel2); border-radius: 
         <label class="atl" title="Separación mínima entre lazos">Separación mín.<input type="number" step="0.5" min="2" id="tn_sep" value="4"></label>
         <label class="atl">Escalón vel. (rad/s)<input type="number" step="0.1" id="tn_sw" value="1"></label>
         <label class="atl">Escalón pos. (rad)<input type="number" step="0.1" id="tn_sp" value="0.5"></label>
-        <label class="atl">vmax (rad/s)<input type="number" step="0.5" id="tn_vmax" value="3"></label>
+        <label class="atl">vmax (rad/s)<input type="number" step="0.5" id="tn_vmax" value="2"></label>
         <label class="atl">Acel. (rad/s²)<input type="number" step="1" id="tn_acc" value="15"></label>
       </fieldset>
       <fieldset><legend>Ganancias actuales (para comparar)</legend>
@@ -182,13 +182,58 @@ canvas { width: 100%; display: block; background: var(--panel2); border-radius: 
     <div class="legend"><span style="color:var(--ref)">referencia</span><span style="color:var(--ok)">diseño</span><span style="color:var(--muted)">actuales</span><span class="x" id="tnMetr"></span></div>
     <pre id="tnCmd" class="tncmd"></pre>
     <div class="row">
-      <label class="atc"><input type="checkbox" id="tnComp" checked> incluir FRIC, GRAV e ILIMIT</label>
+      <label class="atc"><input type="checkbox" id="tnComp" checked> incluir FRICI, GRAV e ILIMIT</label>
       <button class="primary" id="tnSend">Enviar al ESP32</button>
       <button id="tnCopy">Copiar comandos</button>
     </div>
+    <div class="row" style="align-items:end;margin-top:10px">
+      <label class="atl">Probar en la pata<select id="tnWhich"><option value="sel">la articulación elegida</option><option value="all">las tres (coxa → fémur → tibia)</option></select></label>
+      <label class="atl" title="Rango seguro de la prueba (sin topes ni cables)">Coxa mín/máx<span class="row" style="gap:4px"><input type="number" step="0.1" id="tnR0a" value="-0.5" style="width:64px"><input type="number" step="0.1" id="tnR0b" value="1.5" style="width:64px"></span></label>
+      <label class="atl">Fémur mín/máx<span class="row" style="gap:4px"><input type="number" step="0.1" id="tnR1a" value="-1" style="width:64px"><input type="number" step="0.1" id="tnR1b" value="1" style="width:64px"></span></label>
+      <label class="atl">Tibia mín/máx<span class="row" style="gap:4px"><input type="number" step="0.1" id="tnR2a" value="-1" style="width:64px"><input type="number" step="0.1" id="tnR2b" value="1" style="width:64px"></span></label>
+      <button class="primary" id="tnTest" title="Envía el diseño, comprueba que quedó en el ESP32, graba escalones de A y un barrido de todo el rango, y resume">Probar en la pata</button>
+      <button class="stop" id="tnTestAbort">Abortar</button>
+    </div>
+    <pre id="tnTestOut" class="tncmd">Antes: cero del encoder con cada eslabón horizontal, pata en el aire, mano cerca (barra espaciadora = STOP TODO).
+La prueba hace 0 → A → 0 → −A → 0 (A = "Escalón pos.", recortado al rango) y luego barre el rango completo con 0.1 rad de margen: máx → mín → 0; al terminar descarga &lt;articulación&gt;_prueba_ganancias.csv y deja la articulación sostenida en 0.</pre>
     <div class="cfg">Modelo: corriente discreta exacta (1 kHz, 1 muestra de retardo); velocidad y posición con el retardo de muestreo y de la
       ventana del encoder como un polo 1/(τs+1), de modo que se asignan 2 polos dominantes y el tercero lo fija la planta (debe quedar ≥3× más rápido).
       La verificación usa los retardos exactos. Las ganancias valen para la escala de encoder actual: si cambias las cuentas por vuelta, repite la identificación.</div>
+  </div>
+  <div class="card" id="wsCard" style="margin-top:12px">
+    <h2>Recorrido del espacio de trabajo</h2>
+    <div class="cfg" style="margin:4px 0 8px">Barre cada articulación despacio y a velocidad constante por todo su rango, ida y vuelta, con las otras dos
+      en varias posturas (para ver choques entre eslabones o cables). Mide la fricción a lo largo del recorrido (corriente menos gravedad)
+      y marca <b>puntos duros</b> (fricción muy por encima de la típica), <b>enganches</b> (se frena sin llegar) y <b>topes</b> (se detiene empujando:
+      la prueba suelta ese barrido y sigue). Usa los rangos mín/máx y las ganancias del panel de sintonía (las envía al empezar).</div>
+    <div class="row" style="align-items:end">
+      <label class="atl" title="Velocidad del barrido">Velocidad (rad/s)<input type="number" step="0.05" min="0.1" max="1" id="wsSpeed" value="0.3"></label>
+      <label class="atl" title="Margen respecto de los límites del rango">Margen (rad)<input type="number" step="0.05" min="0.05" id="wsMargin" value="0.1"></label>
+      <label class="atc"><input type="checkbox" id="wsC" checked> coxa</label>
+      <label class="atc"><input type="checkbox" id="wsF" checked> fémur</label>
+      <label class="atc"><input type="checkbox" id="wsT" checked> tibia</label>
+      <button class="primary" id="wsStart">Recorrer espacio de trabajo</button>
+      <button class="stop" id="wsAbort">Abortar</button>
+    </div>
+    <div class="tnplots">
+      <div><div class="sub">Coxa: fricción a lo largo del recorrido</div><canvas id="wsP0" height="170"></canvas></div>
+      <div><div class="sub">Fémur</div><canvas id="wsP1" height="170"></canvas></div>
+      <div><div class="sub">Tibia</div><canvas id="wsP2" height="170"></canvas></div>
+    </div>
+    <div class="legend"><span style="color:var(--ok)">ida (hacia +)</span><span style="color:var(--warn)">vuelta (hacia −)</span><span style="color:var(--ref)">- - mapa de fricción</span><span class="x">cada postura es una línea; ▲ punto duro, ■ tope</span></div>
+    <div class="row" style="align-items:end;margin-top:8px">
+      <label class="atl" title="Fracción de la fricción medida que se compensa">Compensar (%)<input type="number" step="5" min="0" max="120" id="fmPct" value="90"></label>
+      <button class="primary" id="fmApply" title="Crea el mapa con el último recorrido y lo envía a las tres articulaciones">Aplicar mapa de fricción</button>
+      <button id="fmClear">Borrar mapa</button>
+      <span class="cfg" id="fmInfo"></span>
+    </div>
+    <div class="row" style="align-items:end;margin-top:8px">
+      <button class="primary" id="gcStart" title="Sostiene fémur y tibia en una grilla de posturas, mide la corriente de sostén y ajusta la gravedad acoplada">Calibrar gravedad (fémur + tibia)</button>
+      <button class="stop" id="gcAbort">Abortar</button>
+      <span class="cfg" id="gcInfo">El peso de la tibia depende de su ángulo respecto del suelo (fémur + tibia): esta calibración lo mide en 25 posturas (unos 3 min).</span>
+    </div>
+    <pre id="wsOut" class="tncmd">Antes: cero de los tres encoders con los eslabones horizontales, pata en el aire, mano cerca (barra espaciadora = STOP TODO).
+Dura unos 3 minutos con las tres articulaciones. Al terminar descarga espacio_trabajo.csv.</pre>
   </div>
   <div class="bottom">
     <div class="card">
@@ -257,16 +302,17 @@ MOTORS.forEach((m, i) => {
     <label>Objetivo (rad)<input type="number" step="0.05" value="0.5" id="pref${i}"></label>
     <label>Vel. máx (rad/s)<input type="number" step="0.5" min="0.1" max="32" value="2" id="pmax${i}"></label>
     <label>Acel. (rad/s²)<input type="number" step="1" min="0.1" max="100" value="5" id="pacc${i}"></label>
-    <label>Tol. (rad)<input type="number" step="0.005" min="0.0023" max="1" value="0.02" id="ptol${i}"></label>
+    <label>Tol. (rad)<input type="number" step="0.005" min="0.0023" max="1" value="0.01" id="ptol${i}"></label>
     <label>Límite CS (A)<input type="number" step="0.05" min="0.01" max="1" value="0.3" id="ilim${i}"></label>
-    <label>Techo PWM (%)<input type="number" step="5" min="0" max="100" value="70" id="ceil${i}"></label>
+    <label>Techo PWM (%)<input type="number" step="5" min="0" max="100" value="100" id="ceil${i}"></label>
     <button class="primary" data-act="pos" data-m="${i}">Ir a posición</button>
     <button data-act="zero" data-m="${i}">Cero encoder</button>
     <label>Kp pos<input type="number" step="0.5" min="0" value="4" id="pkp${i}"></label>
     <label>Ki pos<input type="number" step="10" min="0" value="0" id="pki${i}"></label>
     <button data-act="ppi" data-m="${i}" title="Ganancias del PI de posición (en STOP)">Aplicar PI pos</button>
     <label>Al llegar<select id="hold${i}"><option value="BRAKE">Freno</option><option value="COAST">Suelto</option></select></label>
-    <label>Fricción (% PWM)<input type="number" step="1" min="0" max="70" value="0" id="fric${i}"></label>
+    <label title="Fricción de Coulomb que se suma a la corriente mientras se mueve">Fricción Ic (A)<input type="number" step="0.005" min="0" max="0.5" value="0" id="fic${i}"></label>
+    <label title="Corriente de arranque: el empujón sube de Ic a Is en 150 ms mientras está pegada">Arranque Is (A)<input type="number" step="0.01" min="0" max="0.5" value="0" id="fis${i}"></label>
     <label>Gravedad (A)<input type="number" step="0.02" min="-1" max="1" value="0" id="grav${i}"></label>
     <label>θ₀ gravedad (rad)<input type="number" step="0.1" value="0" id="gofs${i}"></label>
     <button data-act="comp" data-m="${i}" title="Retención, fricción y gravedad">Aplicar compensación</button>
@@ -348,10 +394,12 @@ const actions = {
     send(P(i) + `PPI,${kp},${ki}`);
   },
   comp: (i) => {
-    const fr = num("fric" + i), g = num("grav" + i), o = num("gofs" + i);
-    if (!(fr >= 0 && fr <= 70) || !(Math.abs(g) <= 1) || !(Math.abs(o) <= 10)) return log("UI: compensación fuera de rango", "err");
+    const ic = num("fic" + i), is = num("fis" + i), g = num("grav" + i), o = num("gofs" + i);
+    if (!(ic >= 0 && is >= ic && is <= 0.5) || !(Math.abs(g) <= 1) || !(Math.abs(o) <= 10))
+      return log("UI: compensación fuera de rango (0 ≤ Ic ≤ Is ≤ 0.5 A)", "err");
     send(P(i) + "HOLD," + document.getElementById("hold" + i).value);
-    send(P(i) + "FRIC," + fr.toFixed(2));
+    send(P(i) + "FRIC,0");
+    send(P(i) + `FRICI,${ic.toFixed(4)},${is.toFixed(4)}`);
     send(P(i) + `GRAV,${g.toFixed(4)},${o.toFixed(4)}`);
   },
   pos: (i) => {
@@ -438,6 +486,7 @@ function handleLine(line) {
   const cls = /(^|,)ERR,/.test(line) ? "err" : /(^|,)ACK,/.test(line) ? "ack" : "info";
   log(line, cls);
   atReply(line);
+  if (PG.diag && line.startsWith("DIAG")) PG.diag.push(line);
 }
 /* INFO,M1,COXA,IN1=26,IN2=27,CS=32,ADC1_CH4,ENC_A=35,ENC_B=25,NFAULT=5,ESIGN=1,...
    INFO,BOARD,pata_MOD_DRV,TEL,MULTI */
@@ -494,20 +543,22 @@ function handleCfg(line) {
   const v = f.slice(3).map(parseFloat);
   const cfg = { pidKp: v[0], pidKi: v[1], pwmMin: v[2], pwmMax: v[3], spiKp: v[4], spiKi: v[5],
     ilimit: v[6], ppiKp: v[7], ppiKi: v[8], pmax: v[9], pacc: v[10], ptol: v[11], esign: v[12] | 0,
-    hold: f.length > 16 ? (v[13] ? "BRAKE" : "COAST") : null, fric: v[14], grav: v[15], gofs: v[16] };
+    hold: f.length > 16 ? (v[13] ? "BRAKE" : "COAST") : null, fric: v[14], grav: v[15], gofs: v[16],
+    fic: f.length > 20 ? v[17] : NaN, fis: f.length > 20 ? v[18] : NaN,
+    fmapP: f.length > 22 ? v[19] | 0 : -1, fmapM: f.length > 22 ? v[20] | 0 : -1 };
   state[i].cfg = cfg;
   document.getElementById("cfg" + i).textContent =
     `ESP32: PI CS Kp ${cfg.pidKp} Ki ${cfg.pidKi} · techo PWM ${cfg.pwmMax}% · PI vel Kp ${cfg.spiKp} Ki ${cfg.spiKi}` +
     ` · lím. CS ${cfg.ilimit} A · PI pos Kp ${cfg.ppiKp} Ki ${cfg.ppiKi} · vmax ${cfg.pmax} · acel ${cfg.pacc}` +
     ` · tol ${cfg.ptol} · signo enc ${cfg.esign > 0 ? "+1" : "−1"}` +
-    (cfg.hold ? ` · al llegar ${cfg.hold === "BRAKE" ? "freno" : "suelto"} · fricción ${cfg.fric}% · gravedad ${cfg.grav} A θ₀ ${cfg.gofs}` : "");
+    (cfg.hold ? ` · al llegar ${cfg.hold === "BRAKE" ? "freno" : "suelto"} · fricción ${isFinite(cfg.fic) ? `Ic ${cfg.fic} A, Is ${cfg.fis} A` : "(firmware sin FRICI)"}${cfg.fmapP > 0 || cfg.fmapM > 0 ? ` · mapa de fricción +${cfg.fmapP}/−${cfg.fmapM} tramos` : ""}${cfg.fric > 0 ? ` + ${cfg.fric}% PWM` : ""} · gravedad ${cfg.grav} A θ₀ ${cfg.gofs}` : "");
   if (!state[i].cfgFilled) {
     state[i].cfgFilled = true;
     const setv = (id, x) => { if (isFinite(x)) document.getElementById(id).value = x; };
     setv("pmax" + i, cfg.pmax); setv("pacc" + i, cfg.pacc); setv("ptol" + i, cfg.ptol);
     setv("pkp" + i, cfg.ppiKp); setv("pki" + i, cfg.ppiKi);
     if (cfg.hold) { document.getElementById("hold" + i).value = cfg.hold;
-      setv("fric" + i, cfg.fric); setv("grav" + i, cfg.grav); setv("gofs" + i, cfg.gofs); }
+      setv("fic" + i, cfg.fic); setv("fis" + i, cfg.fis); setv("grav" + i, cfg.grav); setv("gofs" + i, cfg.gofs); }
   }
 }
 
@@ -1032,7 +1083,7 @@ const TUNE = (() => {
     const dt = 1e-4, cpr = opt.cpr || 2800, q = 2 * Math.PI / cpr;
     let th = opt.theta0 || 0, w = 0, stuck = true;
     let ui = 0, iI = 0, iW = 0, iP = 0, wrefOut = 0, Iref = 0, Imeas = 0, Iacc = 0, nacc = 0;
-    let u = 0, Ioutlast = 0;
+    let u = 0, Ioutlast = 0, stuckT = -1;
     const histTh = []; let wmeas = 0;
     const out = { t: [], th: [], thr: [], w: [], wt: [], wr: [], I: [], Ir: [], u: [] };
     const N = Math.round(opt.T / dt);
@@ -1082,13 +1133,21 @@ const TUNE = (() => {
           }
           const wr = mode === 'speed' ? (t >= opt.tStep ? opt.step : 0) : wrefOut;
           const e = wr - wmeas;
+          // Compensación de fricción en la corriente (FRICI del firmware).
+          let ff = 0;
+          if (opt.fric && wr !== 0) {
+            const pr = Math.sign(wr) * wmeas;
+            if (pr > 0.15) { ff = opt.fric.ic; stuckT = -1; }
+            else if (pr < -0.15) { ff = 0; stuckT = -1; }
+            else { if (stuckT < 0) stuckT = t; ff = opt.fric.ic + (opt.fric.is - opt.fric.ic) * Math.min(1, (t - stuckT) / 0.15); }
+          } else stuckT = -1;
           iW += g.ki_w * e * TS_W;
           let req = g.kp_w * e + iW;
           const lim = opt.ilimit;
           if (req > lim) { if (e > 0) iW -= g.ki_w * e * TS_W; req = lim; }
           if (req < -lim) { if (e < 0) iW -= g.ki_w * e * TS_W; req = -lim; }
           const gff = opt.gravFF ? plant.G * Math.cos(thq + plant.th0) : 0;
-          Iref = req + gff;
+          Iref = Math.max(-lim, Math.min(lim, req + Math.sign(wr) * ff)) + gff;
           out.wr.push(wr);
         }
         if (mode === 'current') Iref = t >= opt.tStep ? opt.step : 0;
@@ -1099,8 +1158,7 @@ const TUNE = (() => {
         const ceil = opt.ceil || 100;
         if (!((eff > ceil && e > 0) || (eff < 0 && e < 0))) iI = cand;
         eff = Math.min(ceil, Math.max(0, eff));
-        const fric = (mag > 1e-4 && mode !== 'current') ? (opt.fric || 0) : 0;
-        u = mag > 1e-5 || eff > 0 ? dir * Math.min(100, eff + fric) : 0;
+        u = mag > 1e-5 || eff > 0 ? dir * Math.min(100, eff) : 0;
         if (k % (mode === 'current' ? 10 : 100) === 0) {
           out.t.push(t); out.th.push(th); out.thr.push(mode === 'position' ? prefTraj : 0); out.w.push(wmeas); out.wt.push(w);
           out.I.push(Imeas); out.Ir.push(Iref); out.u.push(u);
@@ -1132,11 +1190,12 @@ const TUNE = (() => {
 /* ---------- Sintonía por asignación de polos ---------- */
 // Identificación del 11-nov (CSV del ensayo automático, firmware pata_MOD_DRV, encoder 2800 cuentas/vuelta).
 const TN_IDENT = [
-  { a: 0.00292, u0: 20, ke: 0.0049, te: 0.2, J: 0.00061, b: 0.00527, Ic: 0.0455, Is: 0.06,  G: 0,      th0: 0,       fric: 29.4, ilim: 0.38 },
-  { a: 0.00268, u0: 20, ke: 0.0007, te: 0.2, J: 0.00154, b: 0.00582, Ic: 0.0407, Is: 0.054, G: 0.0932, th0: -2.7533, fric: 15.8, ilim: 0.30 },
-  { a: 0.00318, u0: 22, ke: 0.0046, te: 0.2, J: 0.00126, b: 0.01369, Ic: 0.0585, Is: 0.107, G: 0.0503, th0: -1.6809, fric: 27.0, ilim: 0.37 },
+  // Is: corriente de arranque vista en las pruebas de posición del 12-nov (descontando la gravedad).
+  { a: 0.00292, u0: 20, ke: 0.0049, te: 0.2, J: 0.00061, b: 0.00527, Ic: 0.0455, Is: 0.10, G: 0,      th0: 0,       ilim: 0.38 },
+  { a: 0.00268, u0: 20, ke: 0.0007, te: 0.2, J: 0.00154, b: 0.00582, Ic: 0.0407, Is: 0.11, G: 0.0932, th0: -2.7533, ilim: 0.30 },
+  { a: 0.00318, u0: 22, ke: 0.0046, te: 0.2, J: 0.00126, b: 0.01369, Ic: 0.0585, Is: 0.20, G: 0.0503, th0: -1.6809, ilim: 0.40 },
 ];
-const TN_KEYS = ["a", "u0", "ke", "te", "J", "b", "Ic", "Is", "G", "th0", "fric", "ilim"];
+const TN_KEYS = ["a", "u0", "ke", "te", "J", "b", "Ic", "Is", "G", "th0", "ilim"];
 const tnEl = (id) => document.getElementById(id);
 const tnNum = (id) => num(id);
 let tnLast = null;
@@ -1235,7 +1294,9 @@ function tnRun() {
   tnEl("tnWarn").innerHTML = g.warn.map((w) => "⚠ " + w).join("<br>");
 
   // Simulaciones
-  const fric = tnNum("tn_fric") || 0, ilim = tnNum("tn_ilim") || 0.3, sw = tnNum("tn_sw") || 1, sp = tnNum("tn_sp") || 0.5;
+  const kc = (isFinite(tnNum("tn_kc")) ? tnNum("tn_kc") : 80) / 100;
+  const ffIc = kc * p.Ic, ffIs = Math.max(ffIc, p.Is);
+  const fric = { ic: ffIc, is: ffIs }, ilim = tnNum("tn_ilim") || 0.3, sw = tnNum("tn_sw") || 1, sp = tnNum("tn_sp") || 0.5;
   const vmax = tnNum("tn_vmax") || 3, acc = tnNum("tn_acc") || 15;
   const iStep = Math.min(0.8 * ilim, 0.15);
   const simAll = (gg) => ({
@@ -1257,7 +1318,11 @@ function tnRun() {
 
   const m = `M${+tnEl("tnMotor").value + 1}`;
   const cmds = [`${m},PID,${g.kp_i.toFixed(3)},${g.ki_i.toFixed(1)},0`, `${m},SPI,${g.kp_w.toFixed(5)},${g.ki_w.toFixed(5)}`, `${m},PPI,${g.kp_p.toFixed(3)},${g.ki_p.toFixed(3)}`];
-  if (tnEl("tnComp").checked) cmds.push(`${m},FRIC,${fric.toFixed(1)}`, `${m},GRAV,${p.G.toFixed(4)},${p.th0.toFixed(4)}`, `${m},ILIMIT,${ilim.toFixed(3)}`);
+  if (tnEl("tnComp").checked) {
+    const gc = gcCommands(+tnEl("tnMotor").value);
+    cmds.push(`${m},FRIC,0`, `${m},FRICI,${ffIc.toFixed(4)},${ffIs.toFixed(4)}`, ...(gc || [`${m},GRAV,${p.G.toFixed(4)},${p.th0.toFixed(4)}`]), `${m},ILIMIT,${ilim.toFixed(3)}`);
+    cmds.push(...fmapCommands(+tnEl("tnMotor").value));
+  }
   tnEl("tnCmd").textContent = cmds.join("\n");
 }
 
@@ -1274,10 +1339,454 @@ tnEl("tnSend").onclick = async () => {
   for (const c of tnEl("tnCmd").textContent.split("\n")) { await send(c); await new Promise((r) => setTimeout(r, 60)); }
   // Que "Aplicar PI pos" e "Ir a posición" no vuelvan a poner los valores viejos.
   tnEl("pkp" + i).value = tnLast.g.kp_p.toFixed(3); tnEl("pki" + i).value = tnLast.g.ki_p.toFixed(3);
-  if (tnEl("tnComp").checked) { tnEl("ilim" + i).value = tnNum("tn_ilim"); tnEl("fric" + i).value = tnNum("tn_fric");
+  const kc = (isFinite(tnNum("tn_kc")) ? tnNum("tn_kc") : 80) / 100, ffIc = kc * tnNum("tn_Ic"), ffIs = Math.max(ffIc, tnNum("tn_Is"));
+  if (tnEl("tnComp").checked) { tnEl("ilim" + i).value = tnNum("tn_ilim"); tnEl("fic" + i).value = ffIc.toFixed(4); tnEl("fis" + i).value = ffIs.toFixed(4);
     tnEl("grav" + i).value = tnNum("tn_G"); tnEl("gofs" + i).value = tnNum("tn_th0"); }
 };
 window.addEventListener("resize", () => tnLast && tnRun());
+
+/* ---------- Prueba de las ganancias en la pata ---------- */
+const PG = { diag: null };
+const pgOut = (t) => { const e = tnEl("tnTestOut"); e.textContent += t + "\n"; e.scrollTop = e.scrollHeight; };
+async function pgJoint(i) {
+  const name = MOTORS[i].name, A = Math.abs(tnNum("tn_sp")) || 0.5;
+  const vmax = tnNum("tn_vmax") || 2, acc = tnNum("tn_acc") || 15;
+  AT.motor = i;
+  tnEl("tnMotor").value = String(i); tnLoadIdent(); tnEl("tnComp").checked = true; tnRun();
+  const g = tnLast.g, s0 = atS();
+  if (!s0) throw new AtAbort("sin datos del ESP32");
+  const rmin = tnNum(`tnR${i}a`), rmax = tnNum(`tnR${i}b`);
+  if (!(rmax - rmin >= 0.4) || !(rmin <= 0 && rmax >= 0)) throw new AtAbort(`rango de M${i + 1} inválido (mín ≤ 0 ≤ máx, al menos 0.4 rad)`);
+  const lo = rmin + 0.1, hi = rmax - 0.1;
+  AT.min = Math.min(rmin, s0.pos); AT.max = Math.max(rmax, s0.pos);
+  pgOut(`== M${i + 1} ${name}: parte en ${s0.pos.toFixed(3)} rad`);
+  await atCmd("STOP");
+  for (const c of tnEl("tnCmd").textContent.split("\n")) await atCmd(c.replace(/^M\d,/, ""));
+  await atCmd("HOLD,BRAKE"); await atCmd("LIMIT,0,100"); await atCmd(`PLIMIT,${vmax},${acc},0.01`);
+  // El panel de la tarjeta también, para que "Ir a posición" no pise los valores.
+  tnEl("pkp" + i).value = g.kp_p.toFixed(3); tnEl("pki" + i).value = g.ki_p.toFixed(3);
+  tnEl("ceil" + i).value = 100; tnEl("ptol" + i).value = 0.01; tnEl("pmax" + i).value = vmax; tnEl("pacc" + i).value = acc;
+  // Comprueba en la configuración que reporta el ESP32 (CFG, ~3 Hz por motor).
+  state[i].cfg = null;
+  await atUntil(() => state[i].cfg, 3000);
+  const c = state[i].cfg, near = (a, b) => isFinite(a) && Math.abs(a - b) <= 0.02 * Math.abs(b) + 1e-4;
+  if (!c) throw new AtAbort("el ESP32 no reportó su configuración (CFG)");
+  const okG = near(c.spiKp, g.kp_w) && near(c.spiKi, g.ki_w) && near(c.ppiKp, g.kp_p) && near(c.pidKi, g.ki_i);
+  const okF = isFinite(c.fic);
+  pgOut(`   ganancias en el ESP32: PID ${c.pidKp}/${c.pidKi} · SPI ${c.spiKp}/${c.spiKi} · PPI ${c.ppiKp}/${c.ppiKi} · ` +
+        `FRICI ${okF ? c.fic + "/" + c.fis : "— (firmware viejo)"} · GRAV ${c.grav} ${okG ? "✔" : "✘ NO COINCIDEN"}`);
+  if (!okG) throw new AtAbort("las ganancias del ESP32 no coinciden con el diseño");
+  if (!okF) throw new AtAbort("el firmware no tiene FRICI: flashea la versión nueva");
+  // Activa Posición sosteniendo donde está.
+  let activo = false;
+  for (let k = 0; k < 3 && !activo; k++) {
+    await atStill(300, 5000);
+    await atCmd(`PREF,${atS().pos.toFixed(4)}`);
+    activo = (await atCmd("MODE,POSITION")).includes("ACK");
+  }
+  if (!activo) throw new AtAbort("no pude activar el modo Posición");
+  const res = [];
+  atStartRec();
+  try {
+    for (const target of [0, Math.min(A, hi), 0, Math.max(-A, lo), 0, hi, lo, 0]) {
+      const p0 = atS().pos, span = target - p0;
+      if (Math.abs(span) < 0.05) { await atCmd(`PREF,${target.toFixed(4)}`); await atSleep(800); continue; }
+      await atCmd(`PREF,${target.toFixed(4)}`);
+      const t0 = performance.now(); let peak = 0, tArr = NaN, dropped = false;
+      await atUntil(() => {
+        const s = atS(); if (s.mode !== 3) { dropped = true; return true; }
+        peak = Math.max(peak, (s.pos - p0) / span);
+        if (isNaN(tArr) && s.posState === 2 && Math.abs(s.pos - target) < 0.03) tArr = (performance.now() - t0) / 1000;
+        return !isNaN(tArr);
+      }, 10000);
+      if (!dropped) await atSleep(1500);
+      const s = atS(); dropped = dropped || s.mode !== 3;
+      const r = { from: p0, to: target, t: tArr, err: target - s.pos, mp: Math.max(0, (peak - 1) * 100), dropped };
+      res.push(r);
+      pgOut(`   ${p0.toFixed(2).padStart(5)} → ${target.toFixed(2).padStart(5)}: ` +
+            (dropped ? "✘ EL MOTOR SE DETUVO (modo " + s.mode + ", estado CS " + s.curStatus + ")" :
+             `${isNaN(tArr) ? "no llegó en 10 s" : "llegó en " + tArr.toFixed(2) + " s"}, error final ${r.err >= 0 ? "+" : ""}${r.err.toFixed(3)} rad, sobrepaso ${r.mp.toFixed(0)} %`));
+      if (dropped) throw new AtAbort(`M${i + 1} se detuvo durante la prueba`);
+    }
+  } finally {
+    atStopRec(`${AT_PREFIX[i]}_prueba_ganancias.csv`);
+    PG.diag = []; send("DIAG"); await new Promise((r) => setTimeout(r, 700));
+    const d = PG.diag.find((l) => l.startsWith(`DIAG,M${i + 1},`)); PG.diag = null;
+    if (d) pgOut("   " + d);
+  }
+  const ok = res.filter((r) => !isNaN(r.t));
+  if (ok.length) pgOut(`   resumen: ${ok.length}/${res.length} llegaron, tiempo medio ${(ok.reduce((a, r) => a + r.t, 0) / ok.length).toFixed(2)} s, ` +
+                       `peor error ${Math.max(...res.map((r) => Math.abs(r.err))).toFixed(3)} rad, peor sobrepaso ${Math.max(...res.map((r) => r.mp)).toFixed(0)} %`);
+}
+tnEl("tnTest").onclick = async () => {
+  if (AT.running) return;
+  if (!connected) { tnEl("tnTestOut").textContent = "Conecta primero el ESP32.\n"; return; }
+  const list = tnEl("tnWhich").value === "all" ? [0, 1, 2] : [+tnEl("tnMotor").value];
+  tnEl("tnTestOut").textContent = `Prueba de ganancias ${new Date().toLocaleString()}\n`;
+  AT.running = true; AT.abort = null; AT.emergency = false; AT.highCur = 0; tnEl("tnTest").disabled = true;
+  let fallos = 0;
+  try {
+    for (const i of list) {
+      try { await pgJoint(i); }
+      catch (e) {
+        const why = e instanceof AtAbort ? e.message : (e && e.message) || String(e);
+        pgOut(`✘ M${i + 1} detenida: ${why}`); log(`PRUEBA: M${i + 1} detenida: ${why}`, "err");
+        recording = false; fallos++;
+        const last = state[i].last;
+        if (!AT.emergency && last && last.mode === 3) send(`M${i + 1},PREF,${last.pos.toFixed(4)}`);
+        if (why === "abortado por el usuario") break;
+        // Parada de seguridad de una articulación: el motor quedó en STOP; sigo con la siguiente.
+        AT.abort = null; AT.emergency = false; AT.highCur = 0;
+      }
+    }
+    pgOut(fallos ? `Terminado con ${fallos} articulación(es) detenida(s).` : "Terminado. Las articulaciones quedan sostenidas en 0.");
+  } finally { AT.running = false; tnEl("tnTest").disabled = false; }
+};
+tnEl("tnTestAbort").onclick = () => { if (AT.running) AT.abort = "abortado por el usuario"; };
+/* ---------- Recorrido del espacio de trabajo ---------- */
+const WS = { sweeps: [], stopAll: false };
+const wsOut = (t) => { const e = tnEl("wsOut"); e.textContent += t + "\n"; e.scrollTop = e.scrollHeight; };
+async function wsCmd(i, body) { AT.motor = i; return atCmd(body); }
+function wsRange(i) { return [tnNum(`tnR${i}a`), tnNum(`tnR${i}b`)]; }
+function wsWatch() { // las tres articulaciones, cada muestra de 20 ms
+  for (let i = 0; i < 3; i++) {
+    const s = state[i].last; if (!s) continue;
+    const [lo, hi] = wsRange(i);
+    if (s.mode === 3 && isFinite(s.pos) && (s.pos < Math.min(lo, WS.start[i]) - 0.08 || s.pos > Math.max(hi, WS.start[i]) + 0.08)) return `M${i + 1} fuera de rango (${s.pos.toFixed(3)} rad)`;
+    if (s.flags & 8) return `nFAULT en M${i + 1}`;
+    WS.hc[i] = isFinite(s.cur) && s.cur > 0.65 ? WS.hc[i] + 1 : 0;
+    if (WS.hc[i] > 15) return `corriente alta en M${i + 1} (${s.cur.toFixed(3)} A)`;
+  }
+  return null;
+}
+async function wsWait(pred, ms) {
+  const t0 = performance.now();
+  while (performance.now() - t0 < ms) {
+    atCheck();
+    const w = wsWatch(); if (w) { send("STOP"); AT.emergency = true; throw new AtAbort("parada de seguridad: " + w); }
+    if (pred && pred()) return true;
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  return false;
+}
+async function wsGo(i, target, timeout = 8000) {
+  await wsCmd(i, `PREF,${target.toFixed(4)}`);
+  return wsWait(() => { const s = state[i].last; return s.posState === 2 && Math.abs(s.pos - target) < 0.03; }, timeout);
+}
+// Barre M(i) hasta target a velocidad constante; devuelve las muestras y si se trabó en un tope.
+async function wsSweep(i, target, v) {
+  const seg = { samples: [], tope: null, reached: false, target };
+  await wsCmd(i, `PREF,${target.toFixed(4)}`);
+  const t0 = performance.now(); let stuckSince = null;
+  const maxT = 4000 + 2500 * Math.abs(target - state[i].last.pos) / v;
+  await wsWait(() => {
+    const s = state[i].last, now = performance.now();
+    seg.samples.push({ pos: s.pos, w: s.spd, I: (s.duty < 0 ? -1 : 1) * (isFinite(s.cur) ? s.cur : 0), wr: s.spdRef, st: s.posState, t: now - t0 });
+    if (s.posState === 2 && Math.abs(s.pos - target) < 0.03) { seg.reached = true; return true; }
+    const pushing = Math.abs(s.spdRef) > 0.1 && Math.abs(s.spd) < 0.05 && s.cur > 0.2;
+    if (pushing) { if (stuckSince === null) stuckSince = now; if (now - stuckSince > 1200) { seg.tope = s.pos; return true; } }
+    else stuckSince = null;
+    return false;
+  }, maxT);
+  if (seg.tope !== null) { // suelta el empuje: sostiene donde quedó
+    await wsCmd(i, `PREF,${state[i].last.pos.toFixed(4)}`); await wsWait(null, 600);
+  }
+  return seg;
+}
+function wsAnalyze(i, seg, dir, cfg) {
+  const G = cfg && isFinite(cfg.grav) ? cfg.grav : 0, th0 = cfg && isFinite(cfg.gofs) ? cfg.gofs : 0;
+  const pts = seg.samples.filter((p) => isFinite(p.w) && dir * p.w > 0.1 && p.st === 0)
+    .map((p) => ({ x: p.pos, f: dir * (p.I - G * Math.cos(p.pos + th0)) }));
+  const bins = new Map();
+  for (const p of pts) { const k = Math.round(p.x / 0.05); if (!bins.has(k)) bins.set(k, []); bins.get(k).push(p.f); }
+  const med = (a) => { const b = [...a].sort((x, y) => x - y); return b.length ? b[b.length >> 1] : NaN; };
+  const curve = [...bins.entries()].sort((a, b) => a[0] - b[0]).map(([k, v]) => ({ x: k * 0.05, f: med(v) }));
+  const typical = med(curve.map((c) => c.f));
+  const hard = curve.filter((c) => c.f > Math.max(1.8 * typical, typical + 0.04));
+  // enganches: frenado (w < 30 % de la consigna) en medio del recorrido durante > 0.15 s
+  let hooks = [], run = 0, at = null;
+  for (const p of seg.samples) {
+    const slow = p.st === 0 && Math.abs(p.wr) > 0.15 && dir * p.w < 0.3 * Math.abs(p.wr);
+    if (slow) { run += 20; if (at === null) at = p.pos; } else { if (run >= 150 && at !== null) hooks.push(at); run = 0; at = null; }
+  }
+  // rebotes: se mueve en contra del sentido pedido a > 0.3 rad/s (algo elástico lo empuja de vuelta)
+  const back = seg.samples.filter((p) => p.st !== 2 && isFinite(p.w) && dir * p.w < -0.3).map((p) => p.pos);
+  const xs = seg.samples.map((p) => p.pos).filter(isFinite);
+  return { curve, typical, hard, hooks, back, reached: seg.reached, span: [Math.min(...xs), Math.max(...xs)] };
+}
+function wsZones(h) { // agrupa casillas contiguas de 0.05 rad: "0.25…0.35 rad (máx 0.16 A)"
+  const z = [];
+  for (const p of h) { const last = z[z.length - 1];
+    if (last && p.x - last.b <= 0.051) { last.b = p.x; last.m = Math.max(last.m, p.f); } else z.push({ a: p.x, b: p.x, m: p.f }); }
+  return z.map((q) => `${q.a === q.b ? q.a.toFixed(2) : q.a.toFixed(2) + "…" + q.b.toFixed(2)} rad (máx ${q.m.toFixed(2)} A)`).join(", ");
+}
+function wsPlot(i) {
+  const cv = tnEl("wsP" + i), list = WS.sweeps.filter((s) => s.joint === i);
+  const dpr = window.devicePixelRatio || 1, W = cv.clientWidth, H = cv.height / (cv._dpr || 1);
+  cv._dpr = dpr; cv.width = W * dpr; cv.height = H * dpr;
+  const c = cv.getContext("2d"); c.setTransform(dpr, 0, 0, dpr, 0, 0); c.clearRect(0, 0, W, H);
+  const [x0, x1] = wsRange(i); let y0 = 0, y1 = 0.05;
+  list.forEach((s) => s.res.forEach((r) => r.curve.forEach((p) => { y0 = Math.min(y0, p.f); y1 = Math.max(y1, p.f); })));
+  if (FMAPS && FMAPS[i]) for (const k of ["plus", "minus"]) if (FMAPS[i][k]) FMAPS[i][k].vals.forEach((v) => { y1 = Math.max(y1, v); });
+  y1 *= 1.1;
+  const L = 40, R = 6, T = 6, B = 18, X = (x) => L + (W - L - R) * (x - x0) / (x1 - x0), Y = (y) => T + (H - T - B) * (y1 - y) / (y1 - y0);
+  const css = getComputedStyle(document.documentElement), col = (v) => css.getPropertyValue(v);
+  c.strokeStyle = col("--line"); c.fillStyle = col("--muted"); c.font = "10px sans-serif"; c.lineWidth = 1;
+  for (let k = 0; k <= 4; k++) { const y = y0 + (y1 - y0) * k / 4; c.beginPath(); c.moveTo(L, Y(y)); c.lineTo(W - R, Y(y)); c.stroke(); c.fillText(y.toFixed(2) + " A", 0, Y(y) + 3); }
+  for (let k = 0; k <= 4; k++) { const x = x0 + (x1 - x0) * k / 4; c.fillText(x.toFixed(1) + " rad", X(x) - 14, H - 4); }
+  list.forEach((s) => s.res.forEach((r, d) => {
+    c.strokeStyle = col(d === 0 ? "--ok" : "--warn"); c.lineWidth = 1.4; c.beginPath();
+    r.curve.forEach((p, k) => (k ? c.lineTo(X(p.x), Y(p.f)) : c.moveTo(X(p.x), Y(p.f)))); c.stroke();
+    c.fillStyle = col("--err");
+    r.hard.forEach((p) => { c.beginPath(); c.moveTo(X(p.x), Y(p.f) - 6); c.lineTo(X(p.x) - 4, Y(p.f) + 1); c.lineTo(X(p.x) + 4, Y(p.f) + 1); c.fill(); });
+    if (s.topes[d] !== null) c.fillRect(X(s.topes[d]) - 4, Y(y1 * 0.9) - 4, 8, 8);
+  }));
+  const f = FMAPS[i];
+  if (f) for (const k of ["plus", "minus"]) if (f[k]) {
+    c.strokeStyle = col("--ref"); c.setLineDash([5, 4]); c.lineWidth = 1.4; c.beginPath();
+    f[k].vals.forEach((v, n) => { const x = f[k].start + n * f[k].step; n ? c.lineTo(X(x), Y(v)) : c.moveTo(X(x), Y(v)); });
+    c.stroke(); c.setLineDash([]);
+  }
+}
+async function wsRun() {
+  if (AT.running) return;
+  if (!connected) { tnEl("wsOut").textContent = "Conecta primero el ESP32.\n"; return; }
+  const v = Math.min(1, Math.max(0.1, tnNum("wsSpeed") || 0.3)), mg = Math.max(0.05, tnNum("wsMargin") || 0.1);
+  const R = [0, 1, 2].map(wsRange);
+  for (let i = 0; i < 3; i++) if (!(R[i][1] - R[i][0] >= 0.4 && R[i][0] <= 0 && R[i][1] >= 0)) { tnEl("wsOut").textContent = `Rango de M${i + 1} inválido.\n`; return; }
+  tnEl("wsOut").textContent = `Recorrido del espacio de trabajo ${new Date().toLocaleString()} · ${v} rad/s\n`;
+  AT.min = -1e9; AT.max = 1e9;
+  WS.sweeps = []; WS.hc = [0, 0, 0]; WS.start = [0, 1, 2].map((i) => state[i].last ? state[i].last.pos : 0);
+  AT.running = true; AT.abort = null; AT.emergency = false; tnEl("wsStart").disabled = true;
+  const lo = (i) => R[i][0] + mg, hi = (i) => R[i][1] - mg;
+  // Posturas de las otras dos articulaciones para cada barrido [coxa, fémur, tibia]; null = la que barre.
+  const plan = [];
+  if (tnEl("wsT").checked) for (const f of [lo(1), 0, hi(1)]) plan.push([2, [0, f, null]]);
+  if (tnEl("wsF").checked) for (const t of [lo(2), 0, hi(2)]) plan.push([1, [0, null, t]]);
+  if (tnEl("wsC").checked) for (const [f, t] of [[0, 0], [lo(1), hi(2)]]) plan.push([0, [null, f, t]]);
+  atStartRec();
+  try {
+    // Ganancias del panel en las tres, y las tres en Posición sosteniendo donde están.
+    for (let i = 0; i < 3; i++) {
+      tnEl("tnMotor").value = String(i); tnLoadIdent(); tnEl("tnComp").checked = true; tnRun();
+      await wsCmd(i, "STOP");
+      for (const c of tnEl("tnCmd").textContent.split("\n")) await wsCmd(i, c.replace(/^M\d,/, ""));
+      await wsCmd(i, "HOLD,BRAKE"); await wsCmd(i, "LIMIT,0,100"); await wsCmd(i, "PLIMIT,0.6,4,0.01");
+      let ok = false;
+      for (let k = 0; k < 3 && !ok; k++) { await wsWait(null, 300); await wsCmd(i, `PREF,${state[i].last.pos.toFixed(4)}`); ok = (await wsCmd(i, "MODE,POSITION")).includes("ACK"); }
+      if (!ok) throw new AtAbort(`no pude activar Posición en M${i + 1}`);
+    }
+    wsOut(`Ganancias del panel enviadas; ${plan.length} barridos.`);
+    const name = ["coxa", "fémur", "tibia"];
+    for (const [j, pose] of plan) {
+      const others = [0, 1, 2].filter((k) => k !== j);
+      for (const k of others) await wsCmd(k, "PLIMIT,0.6,4,0.01");
+      await Promise.resolve();
+      for (const k of others) await wsGo(k, pose[k]);
+      await wsCmd(j, "PLIMIT,0.6,4,0.01"); await wsGo(j, lo(j));
+      await wsCmd(j, `PLIMIT,${v},2,0.01`);
+      const up = await wsSweep(j, hi(j), v), down = await wsSweep(j, lo(j), v);
+      await wsCmd(j, "PLIMIT,0.6,4,0.01");
+      const cfg = state[j].cfg;
+      const res = [wsAnalyze(j, up, +1, cfg), wsAnalyze(j, down, -1, cfg)];
+      const sw = { joint: j, pose, res, topes: [up.tope, down.tope], up, down };
+      WS.sweeps.push(sw); wsPlot(j);
+      const desc = others.map((k) => `${name[k]} ${pose[k].toFixed(2)}`).join(", ");
+      wsOut(`== ${name[j]} (${desc})`);
+      ["ida  ", "vuelta"].forEach((lab, d) => {
+        const r = res[d], tp = sw.topes[d];
+        wsOut(`   ${lab}: fricción típica ${isFinite(r.typical) ? r.typical.toFixed(3) : "—"} A` +
+              (r.hard.length ? ` · ▲ puntos duros en ${wsZones(r.hard)}` : " · sin puntos duros") +
+              (r.hooks.length ? ` · enganches en ${r.hooks.map((h) => h.toFixed(2)).join(", ")} rad` : "") +
+              (tp !== null ? ` · ■ TOPE en ${tp.toFixed(2)} rad (no llegó a ${(d ? lo(j) : hi(j)).toFixed(2)})` : "") +
+              (r.back.length >= 3 ? ` · ↩ REBOTA hacia atrás ${r.back.length} veces entre ${Math.min(...r.back).toFixed(2)} y ${Math.max(...r.back).toFixed(2)} rad` : "") +
+              (!r.reached && tp === null ? ` · ✘ NO COMPLETÓ: quedó entre ${r.span[0].toFixed(2)} y ${r.span[1].toFixed(2)} rad (objetivo ${(d ? lo(j) : hi(j)).toFixed(2)})` : ""));
+      });
+    }
+    for (let i = 0; i < 3; i++) await wsCmd(i, "PLIMIT,0.6,4,0.01");
+    for (const i of [2, 1, 0]) await wsGo(i, 0);
+    wsOut("Terminado: las tres quedan sostenidas en 0.");
+  } catch (e) {
+    const why = e instanceof AtAbort ? e.message : (e && e.message) || String(e);
+    wsOut("✘ Detenido: " + why); log("RECORRIDO: " + why, "err");
+    if (!AT.emergency) for (let i = 0; i < 3; i++) { const s = state[i].last; if (s && s.mode === 3) send(`M${i + 1},PREF,${s.pos.toFixed(4)}`); }
+  } finally {
+    atStopRec("espacio_trabajo.csv");
+    AT.running = false; tnEl("wsStart").disabled = false;
+  }
+}
+
+/* ---------- Mapa de fricción según el ángulo (FMAP) ---------- */
+// Con bujes de PLA la fricción cambia a lo largo del recorrido: el firmware suma, en cada
+// ángulo y sentido, la corriente que hizo falta para moverse ahí en el último recorrido.
+var FM_KEY = "pata_fmap_v1";
+var FMAPS = {};
+try { FMAPS = JSON.parse(localStorage.getItem(FM_KEY) || "{}") || {}; } catch (e) { FMAPS = {}; }
+function fmSave() { try { localStorage.setItem(FM_KEY, JSON.stringify(FMAPS)); } catch (e) {} }
+function fmapCommands(i) {
+  const f = FMAPS && FMAPS[i]; if (!f) return [];
+  const out = [];
+  for (const [d, k] of [["+", "plus"], ["-", "minus"]]) if (f[k])
+    out.push(`M${i + 1},FMAP,${d},${f[k].start.toFixed(3)},${f[k].step.toFixed(3)},${f[k].vals.map((v) => v.toFixed(3)).join(",")}`);
+  return out;
+}
+function fmBuild(j, pct) {
+  const [rmin, rmax] = wsRange(j);
+  const n = Math.min(48, Math.max(2, Math.round((rmax - rmin) / 0.05) + 1)), step = (rmax - rmin) / (n - 1);
+  const cfg = state[j].cfg, G = cfg && isFinite(cfg.grav) ? cfg.grav : 0, th0 = cfg && isFinite(cfg.gofs) ? cfg.gofs : 0;
+  const res = {};
+  for (const [dir, key, segKey] of [[1, "plus", "up"], [-1, "minus", "down"]]) {
+    const bins = Array.from({ length: n }, () => []);
+    for (const sw of WS.sweeps.filter((s) => s.joint === j))
+      for (const p of sw[segKey].samples)
+        if (isFinite(p.w) && dir * p.w > 0.1 && p.st === 0) {
+          const k = Math.round((p.pos - rmin) / step);
+          if (k >= 0 && k < n) bins[k].push(dir * (p.I - G * Math.cos(p.pos + th0)));
+        }
+    const med = bins.map((b) => { if (b.length < 3) return NaN; const c = [...b].sort((x, y) => x - y); return c[c.length >> 1]; });
+    if (med.every((v) => !isFinite(v))) continue;
+    // Huecos: el vecino medido más cercano. Luego se adelanta un tramo (máximo de ±1) para empezar
+    // a empujar un poco antes del punto duro.
+    const fill = med.map((v, k) => { if (isFinite(v)) return v; for (let d = 1; d < n; d++) { if (isFinite(med[k - d])) return med[k - d]; if (isFinite(med[k + d])) return med[k + d]; } return 0; });
+    const vals = fill.map((v, k) => Math.min(0.4, Math.max(0, pct / 100 * Math.max(v, fill[k - 1] ?? v, fill[k + 1] ?? v))));
+    res[key] = { start: rmin, step, vals };
+  }
+  return res;
+}
+function fmInfo() {
+  const t = [0, 1, 2].map((i) => FMAPS[i] ? `M${i + 1} ✔` : `M${i + 1} —`).join(" · ");
+  tnEl("fmInfo").textContent = `Mapas guardados en este navegador: ${t}. Se reenvían con "Enviar al ESP32", "Probar en la pata" y el recorrido.`;
+}
+tnEl("fmApply").onclick = async () => {
+  if (!WS.sweeps.length) { tnEl("fmInfo").textContent = "Primero haz un recorrido del espacio de trabajo (en esta sesión)."; return; }
+  const pct = Math.min(120, Math.max(0, tnNum("fmPct") || 90));
+  for (const j of [0, 1, 2]) {
+    if (!WS.sweeps.some((s) => s.joint === j)) continue;
+    const f = fmBuild(j, pct); if (!f.plus && !f.minus) continue;
+    FMAPS[j] = f; wsPlot(j);
+    if (connected) for (const c of fmapCommands(j)) { await send(c); await new Promise((r) => setTimeout(r, 80)); }
+  }
+  fmSave(); fmInfo(); log("MAPA: mapa de fricción aplicado", "ack");
+};
+tnEl("fmClear").onclick = async () => {
+  FMAPS = {}; fmSave(); fmInfo();
+  if (connected) for (const i of [0, 1, 2]) { await send(`M${i + 1},FMAP,CLEAR`); await new Promise((r) => setTimeout(r, 60)); }
+  [0, 1, 2].forEach(wsPlot);
+};
+fmInfo();
+
+/* ---------- Calibración de gravedad acoplada fémur + tibia ---------- */
+var GC_KEY = "pata_gravcal_v1";
+var GRAVCAL = null;
+try { GRAVCAL = JSON.parse(localStorage.getItem(GC_KEY) || "null"); } catch (e) { GRAVCAL = null; }
+// Comandos de gravedad calibrada para el motor i (null si no hay calibración para él).
+function gcCommands(i) {
+  if (!GRAVCAL || (i !== 1 && i !== 2)) return null;
+  const g = GRAVCAL, m = `M${i + 1}`;
+  if (i === 2) return [`${m},GRAV,0,0`, `${m},GRAV2,${g.A.toFixed(4)},${g.phi.toFixed(4)},2,${g.s}`];
+  return [`${m},GRAV,${g.B.toFixed(4)},${g.phi1.toFixed(4)}`, `${m},GRAV2,${g.A.toFixed(4)},${(g.s * g.phi).toFixed(4)},3,${g.s}`];
+}
+function gcFit2(xs, ys) { // y ≈ a cos x + b sin x  ->  A cos(x + φ)
+  let cc = 0, ss = 0, cs = 0, yc = 0, ysn = 0;
+  xs.forEach((x, k) => { const c = Math.cos(x), s = Math.sin(x); cc += c * c; ss += s * s; cs += c * s; yc += ys[k] * c; ysn += ys[k] * s; });
+  const det = cc * ss - cs * cs; const a = (yc * ss - ysn * cs) / det, b = (ysn * cc - yc * cs) / det;
+  const fit = xs.map((x) => a * Math.cos(x) + b * Math.sin(x));
+  const rms = Math.sqrt(ys.reduce((q, y, k) => q + (y - fit[k]) ** 2, 0) / ys.length);
+  const mean = ys.reduce((q, y) => q + y, 0) / ys.length, tot = ys.reduce((q, y) => q + (y - mean) ** 2, 0);
+  return { A: Math.hypot(a, b), phi: Math.atan2(-b, a), rms, r2: tot > 0 ? 1 - rms * rms * ys.length / tot : 0, fit };
+}
+async function gcHold(target) { // lleva fémur y tibia a target=[f,t] y espera quietas en el objetivo
+  await wsCmd(1, `PREF,${target[0].toFixed(4)}`); await wsCmd(2, `PREF,${target[1].toFixed(4)}`);
+  let since = null;
+  return wsWait(() => {
+    const a = state[1].last, b = state[2].last, now = performance.now();
+    const ok = Math.abs(a.pos - target[0]) < 0.012 && Math.abs(b.pos - target[1]) < 0.012 && Math.abs(a.spd) < 0.05 && Math.abs(b.spd) < 0.05;
+    if (!ok) { since = null; return false; } if (since === null) since = now; return now - since > 400;
+  }, 6000);
+}
+async function gcRun() {
+  if (AT.running) return;
+  const out = (t) => wsOut(t);
+  if (!connected) { tnEl("wsOut").textContent = "Conecta primero el ESP32.\n"; return; }
+  const [fl, fh] = wsRange(1), [tl, th] = wsRange(2);
+  tnEl("wsOut").textContent = `Calibración de gravedad ${new Date().toLocaleString()}\n`;
+  AT.running = true; AT.abort = null; AT.emergency = false; AT.min = -1e9; AT.max = 1e9;
+  WS.hc = [0, 0, 0]; WS.start = [0, 1, 2].map((i) => state[i].last ? state[i].last.pos : 0);
+  tnEl("gcStart").disabled = true;
+  atStartRec();
+  try {
+    for (let i = 0; i < 3; i++) {
+      tnEl("tnMotor").value = String(i); tnLoadIdent(); tnEl("tnComp").checked = true; tnRun();
+      await wsCmd(i, "STOP");
+      for (const c of tnEl("tnCmd").textContent.split("\n")) if (!/,FMAP,|,GRAV/.test(c)) await wsCmd(i, c.replace(/^M\d,/, ""));
+      // Sin gravedad ni mapa: el lazo (tolerancia mínima, siempre activo) da la corriente real de sostén.
+      await wsCmd(i, "GRAV,0,0"); await wsCmd(i, "GRAV2,0,0,0,0"); await wsCmd(i, "FMAP,CLEAR");
+      await wsCmd(i, "HOLD,BRAKE"); await wsCmd(i, "LIMIT,0,100"); await wsCmd(i, "PLIMIT,0.6,4,0.0023");
+      let ok = false;
+      for (let k = 0; k < 3 && !ok; k++) { await wsWait(null, 300); await wsCmd(i, `PREF,${state[i].last.pos.toFixed(4)}`); ok = (await wsCmd(i, "MODE,POSITION")).includes("ACK"); }
+      if (!ok) throw new AtAbort(`no pude activar Posición en M${i + 1}`);
+    }
+    delete FMAPS[1]; delete FMAPS[2]; fmSave(); fmInfo();
+    await wsGo(0, 0);
+    const lin = (a, b, n) => Array.from({ length: n }, (_, k) => a + (b - a) * k / (n - 1));
+    const F = lin(fl + 0.15, fh - 0.15, 5), T = lin(tl + 0.15, th - 0.15, 5);
+    const pts = [];
+    out(`Grilla fémur ${F.map((x) => x.toFixed(2)).join(" ")} × tibia ${T.map((x) => x.toFixed(2)).join(" ")} (desde abajo y desde arriba).`);
+    for (let a = 0; a < F.length; a++) {
+      const Tord = a % 2 ? [...T].reverse() : T;
+      for (const t of Tord) {
+        const f = F[a], rec = { If: [], It: [], pf: [], pt: [] };
+        for (const side of [-1, 1]) {
+          await gcHold([f + side * 0.12, t + side * 0.12]);
+          const okHold = await gcHold([f, t]);
+          if (!okHold) { out(`   (${f.toFixed(2)}, ${t.toFixed(2)}) no se quedó quieta; la salto`); continue; }
+          let sf = 0, st = 0, n = 0;
+          const t0 = performance.now();
+          await wsWait(() => { const A = state[1].last, B = state[2].last;
+            sf += (A.duty < 0 ? -1 : 1) * (isFinite(A.cur) ? A.cur : 0); st += (B.duty < 0 ? -1 : 1) * (isFinite(B.cur) ? B.cur : 0); n++;
+            return performance.now() - t0 > 600; }, 1000);
+          rec.If.push(sf / n); rec.It.push(st / n); rec.pf.push(state[1].last.pos); rec.pt.push(state[2].last.pos);
+        }
+        if (rec.If.length === 2) {
+          const mean = (v) => (v[0] + v[1]) / 2;
+          const P = { f: mean(rec.pf), t: mean(rec.pt), If: mean(rec.If), It: mean(rec.It), dIt: Math.abs(rec.It[0] - rec.It[1]) / 2 };
+          pts.push(P);
+          out(`   fémur ${P.f.toFixed(2)} tibia ${P.t.toFixed(2)}: sostén fémur ${P.If.toFixed(3)} A, tibia ${P.It.toFixed(3)} A (± fricción ${P.dIt.toFixed(3)})`);
+        }
+      }
+    }
+    if (pts.length < 8) throw new AtAbort("muy pocas posturas válidas para ajustar");
+    // Tibia: A cos(θt + s θf + φ); se elige el signo s que mejor explica los datos.
+    const fits = [1, -1, 0].map((sg) => ({ s: sg, ...gcFit2(pts.map((p) => p.t + sg * p.f), pts.map((p) => p.It)) }));
+    fits.forEach((q) => out(`   tibia con s=${q.s >= 0 ? "+" : ""}${q.s}: G=${q.A.toFixed(4)} A, φ=${q.phi.toFixed(3)}, R²=${q.r2.toFixed(3)}, error ${q.rms.toFixed(4)} A`));
+    const best = fits.slice(0, 2).sort((x, y) => x.rms - y.rms)[0];
+    // Fémur: B cos(θf + φ1) + (la misma tibia)
+    const resid = pts.map((p, k) => p.If - best.fit[k]);
+    const ff = gcFit2(pts.map((p) => p.f), resid);
+    const yF = pts.map((p) => p.If), mF = yF.reduce((q, y) => q + y, 0) / yF.length;
+    const r2F = 1 - pts.reduce((q, p, k) => q + (p.If - (best.fit[k] + ff.fit[k])) ** 2, 0) / Math.max(1e-12, yF.reduce((q, y) => q + (y - mF) ** 2, 0));
+    out(`   fémur: G propio=${ff.A.toFixed(4)} A, φ1=${ff.phi.toFixed(3)} + término de la tibia → R²=${r2F.toFixed(3)}`);
+    GRAVCAL = { s: best.s, A: best.A, phi: best.phi, B: ff.A, phi1: ff.phi, r2t: best.r2, r2f: r2F, date: new Date().toISOString() };
+    try { localStorage.setItem(GC_KEY, JSON.stringify(GRAVCAL)); } catch (e) {}
+    for (const i of [1, 2]) for (const c of gcCommands(i)) await wsCmd(i, c.replace(/^M\d,/, ""));
+    for (const i of [1, 2]) await wsCmd(i, "PLIMIT,0.6,4,0.01");
+    out(`Aplicado: ${[...gcCommands(1), ...gcCommands(2)].join(" · ")}`);
+    out("Queda guardado en este navegador y se envía con el panel. Repite el recorrido y luego el mapa de fricción.");
+    await gcHold([0, 0]);
+  } catch (e) {
+    const why = e instanceof AtAbort ? e.message : (e && e.message) || String(e);
+    out("✘ Detenido: " + why); log("GRAVEDAD: " + why, "err");
+    if (!AT.emergency) for (let i = 0; i < 3; i++) { const s = state[i].last; if (s && s.mode === 3) send(`M${i + 1},PREF,${s.pos.toFixed(4)}`); }
+  } finally {
+    atStopRec("calibracion_gravedad.csv");
+    AT.running = false; tnEl("gcStart").disabled = false;
+  }
+}
+tnEl("gcStart").onclick = gcRun;
+tnEl("gcAbort").onclick = () => { if (AT.running) AT.abort = "abortado por el usuario"; };
+tnEl("wsStart").onclick = wsRun;
+tnEl("wsAbort").onclick = () => { if (AT.running) AT.abort = "abortado por el usuario"; };
+
 tnLoadIdent();
 </script>
 </body>

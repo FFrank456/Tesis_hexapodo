@@ -125,7 +125,7 @@ static void adc_task(void *arg)
             } else {
                 bool fresh=esp_timer_get_time()-m.eof_us <= SENSE_DMA_STALE_US;
                 uint32_t count[SENSE_CHANNEL_COUNT]={0}, accepted_n[SENSE_CHANNEL_COUNT]={0};
-                uint32_t quality_n[SENSE_CHANNEL_COUNT]={0};
+                uint32_t quality_n[SENSE_CHANNEL_COUNT]={0}, sat_n[SENSE_CHANNEL_COUNT]={0};
                 uint32_t raw_sum[SENSE_CHANNEL_COUNT]={0}, mv_sum[SENSE_CHANNEL_COUNT]={0};
                 uint32_t malformed=0;
                 uint16_t mask=0;
@@ -153,7 +153,10 @@ static void adc_task(void *arg)
                     /* Preserve diagnostic raw/voltage even without an estimate. */
                     if (!accepted_n[c]) { p->raw=raw; p->voltage=calibrated ? mv/1000.0f : NAN; }
                     p->converted=true;
-                    if (!fresh || !calibrated || raw==4095) { quality_n[c]++; continue; }
+                    if (!fresh || !calibrated) { quality_n[c]++; continue; }
+                    /* Brush commutation spikes clip a few samples at full scale: keep them
+                     * (clipped, so the block mean is a lower bound) unless too many clip. */
+                    if (raw==4095) sat_n[c]++;
                     /* Assign only code zero to 0 V before averaging; preserve SDK voltage
                      * in diagnostics. This is an assignment, not calibration. */
                     float amps=raw==0 ? 0.0f : mv/(1000.0f*SENSE_CS_VOLTS_PER_AMP);
@@ -173,14 +176,15 @@ static void adc_task(void *arg)
                 for (int c=0; c<SENSE_CHANNEL_COUNT; c++) {
                     current_sample_t *p=&s[c];
                     uint32_t q=quality_n[c], a=accepted_n[c];
+                    bool clipped=sat_n[c] > SENSE_MAX_SATURATED_PER_BLOCK;
                     bool short_block=count[c]<SENSE_MIN_BLOCK_SAMPLES;
                     if (!calibrated) p->status=CURRENT_CALIBRATION_ERROR;
                     else if (bad_frame || short_block) p->status=CURRENT_ADC_ERROR;
-                    else if (fresh && q) p->status=CURRENT_ADC_SATURATED;
-                    diag.ch[c].count=count[c]; diag.ch[c].saturated=q;
+                    else if (fresh && (q || clipped)) p->status=CURRENT_ADC_SATURATED;
+                    diag.ch[c].count=count[c]; diag.ch[c].saturated=sat_n[c];
                     diag.ch[c].raw_min=raw_min[c]; diag.ch[c].raw_max=raw_max[c];
                     diag.ch[c].raw_mean=count[c] ? (float)all_sum[c]/count[c] : NAN;
-                    if (lost_now || bad_frame || !fresh || q || short_block) {
+                    if (lost_now || bad_frame || !fresh || q || clipped || short_block) {
                         q+=a; a=0;
                         if (lost_now) p->status=CURRENT_DMA_OVERFLOW;
                         else if (bad_frame || !fresh) p->status=CURRENT_ADC_ERROR;

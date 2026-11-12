@@ -28,6 +28,12 @@
 /* Results with an unexpected channel field tolerated per frame before the
  * whole frame is rejected. */
 #define SENSE_MAX_MALFORMED_PER_FRAME 6U
+/* Samples per channel block (64) allowed at ADC full scale (kept clipped, so the
+ * mean is a lower bound and the current PI still backs off) before the block is
+ * rejected as CURRENT_ADC_SATURATED (single spikes come from brush commutation). */
+#ifndef SENSE_MAX_SATURATED_PER_BLOCK
+#define SENSE_MAX_SATURATED_PER_BLOCK 32U
+#endif
 #define SENSE_DMA_STALE_US 10000
 #define SENSE_DATA_VERSION 6U
 /* Modulo DRV8876 MJKDZ: V/A = R_IPROPI * A_IPROPI (ver pin_map.h; 2.49 V/A por defecto). */

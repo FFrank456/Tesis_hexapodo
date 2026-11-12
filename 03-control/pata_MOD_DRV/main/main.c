@@ -71,6 +71,38 @@
  * than the speed reference and the current loop has nothing to drive, e.g. a
  * leg lowering under its own weight. */
 #define OVERSPEED_BRAKE_RAD_S               0.5f
+/* Friction feed-forward in the current reference (FRICI,Ic,Is): Coulomb Ic
+ * while the joint moves the commanded way; when it is stuck the term ramps
+ * from Ic to Is in FRIC_BREAKAWAY_RAMP_US (breakaway push) and stays there. */
+#ifndef FRIC_MOVING_RAD_S
+#define FRIC_MOVING_RAD_S                   0.15f
+#endif
+#ifndef FRIC_BREAKAWAY_RAMP_US
+#define FRIC_BREAKAWAY_RAMP_US              150000LL
+#endif
+#define FRIC_MAX_A                          0.5f
+/* Position-dependent friction map (FMAP): per motion direction, Coulomb
+ * current per angle bin, linearly interpolated (PLA bushings: friction varies
+ * along the travel). When set it replaces Ic of FRICI for that direction. */
+#define FMAP_MAX_BINS                       48
+#ifndef FMAP_BREAKAWAY_RATIO
+#define FMAP_BREAKAWAY_RATIO                1.4f
+#endif
+typedef struct {
+    bool valid;
+    uint8_t n;
+    float start_rad, step_rad;
+    float amps[FMAP_MAX_BINS];
+} fric_map_t;
+#ifndef FRIC_BREAKAWAY_MAX_FACTOR
+#define FRIC_BREAKAWAY_MAX_FACTOR           2.0f
+#endif
+/* In SPEED/POSITION, up to this many consecutive unusable 1 ms current blocks
+ * keep the last PWM instead of stopping (a dropped joint is worse than 5 ms
+ * of open loop; the DRV8876 still limits the current in hardware). */
+#ifndef CURRENT_RIDE_THROUGH_BLOCKS
+#define CURRENT_RIDE_THROUGH_BLOCKS         5
+#endif
 
 _Static_assert(PWM_FREQUENCY_HZ % SNAPSHOT_RATE_HZ == 0,
                "SNAPSHOT_RATE_HZ must divide PWM_FREQUENCY_HZ");
@@ -159,6 +191,13 @@ typedef struct {
     bool hold_brake;
     bool gravity_holding;
     float friction_pwm;
+    float friction_ic_a;
+    float friction_is_a;
+    float friction_term_a;
+    bool friction_breakaway;
+    int fmap_bins[2];
+    float gravity2_a, gravity2_offset_rad, gravity2_coupling;
+    int gravity2_motor;
     float gravity_a;
     float gravity_offset_rad;
 } telemetry_t;
@@ -196,9 +235,23 @@ typedef struct {
     motor_direction_t control_direction;
     /* Position hold and compensation (pata_MOD_DRV). */
     bool hold_brake;          /* brake instead of coast when POSITION is not tracking */
-    float friction_pwm;       /* % PWM added while the cascade drives (SPEED/POSITION) */
+    float friction_pwm;       /* % PWM added while the cascade drives (legacy, the current loop cancels it) */
+    float friction_ic_a;      /* Coulomb friction feed-forward, CS-equivalent A (FRICI) */
+    float friction_is_a;      /* static friction / breakaway current, CS-equivalent A (FRICI) */
+    float friction_term_a;    /* feed-forward applied in the last step (telemetry) */
+    bool friction_breakaway;  /* joint stuck: breakaway push active (telemetry) */
+    int64_t friction_stuck_since_us;
+    fric_map_t fmap[2];       /* [0] motion +, [1] motion - */
+    uint8_t current_invalid_streak; /* consecutive unusable CS blocks ridden through */
+    uint32_t current_ride_through_total;
     float gravity_a;          /* CS-equivalent A needed to hold the link at cos()=1 */
     float gravity_offset_rad; /* angle added to the position before cos() */
+    /* Second gravity term coupled to another joint of this leg (GRAV2):
+     * gravity2_a*cos(pos + gravity2_coupling*pos[gravity2_motor] + gravity2_offset_rad).
+     * The tibia's weight depends on its angle to the ground = femur + tibia. */
+    float gravity2_a, gravity2_offset_rad, gravity2_coupling;
+    int gravity2_motor;       /* -1 = off */
+    double last_position_rad; /* for the other joints' coupled terms */
     bool gravity_holding;     /* POSITION at rest, current = gravity hold only (display) */
     float speed_current_a;    /* speed-loop output, magnitude in the motion direction */
     motor_direction_t drive_direction; /* direction the current loop actually drives */
@@ -604,12 +657,70 @@ typedef struct {
  * Returns the magnitude for the current loop and the direction to drive it.
  * Lowering a weighted link this way commands LESS lifting current instead of
  * coasting, so the speed loop keeps control while gravity does the work. */
+static float fmap_eval(const fric_map_t *f, double pos_rad)
+{
+    float x = (float)((pos_rad - f->start_rad) / f->step_rad);
+    if (x <= 0.0f) return f->amps[0];
+    if (x >= (float)(f->n - 1)) return f->amps[f->n - 1];
+    int k = (int)x; float t = x - (float)k;
+    return f->amps[k] + (f->amps[k + 1] - f->amps[k]) * t;
+}
+
+/* Friction feed-forward (magnitude, in the commanded motion direction). */
+static float friction_feedforward(motor_t *m, const encoder_sample_t *encoder, int64_t now_us)
+{
+    float ic = m->friction_ic_a, is = fmaxf(m->friction_is_a, m->friction_ic_a);
+    const fric_map_t *map = &m->fmap[m->control_direction == MOTOR_CCW ? 1 : 0];
+    if (map->valid && isfinite(encoder->output_position_rad)) {
+        ic = fmap_eval(map, encoder->output_position_rad);
+        is = fmaxf(is, FMAP_BREAKAWAY_RATIO * ic);
+    }
+    if (m->speed.reference_rad_s == 0 || is <= 0.0f || !encoder->speed_valid ||
+        !isfinite(encoder->output_speed_rad_s)) {
+        m->friction_stuck_since_us = 0; m->friction_breakaway = false;
+        return 0.0f;
+    }
+    float projected = (m->control_direction == MOTOR_CCW ? -1.0f : 1.0f) * (float)encoder->output_speed_rad_s;
+    if (projected > FRIC_MOVING_RAD_S) {          /* moving the commanded way */
+        m->friction_stuck_since_us = 0; m->friction_breakaway = false;
+        return ic;
+    }
+    if (projected < -FRIC_MOVING_RAD_S) {         /* still moving the other way */
+        m->friction_stuck_since_us = 0; m->friction_breakaway = false;
+        return 0.0f;
+    }
+    if (!m->friction_stuck_since_us) m->friction_stuck_since_us = now_us;
+    m->friction_breakaway = true;
+    /* Ic -> Is in FRIC_BREAKAWAY_RAMP_US and on at the same rate up to
+     * FRIC_BREAKAWAY_MAX_FACTOR*Is (static friction varies along the travel).
+     * The speed integrator is frozen meanwhile, so nothing is left wound up
+     * when the joint breaks loose and the push drops back to Ic. */
+    float ramp = (float)(now_us - m->friction_stuck_since_us) / (float)FRIC_BREAKAWAY_RAMP_US;
+    float cap = fminf(FRIC_BREAKAWAY_MAX_FACTOR * is, m->speed.current_limit_a);
+    return fminf(ic + (is - ic) * fmaxf(ramp, 0.0f), fmaxf(cap, ic));
+}
+
+static bool has_gravity(const motor_t *m)
+{
+    return m->gravity_a != 0.0f || (m->gravity2_a != 0.0f && m->gravity2_motor >= 0);
+}
+static float gravity_hold_a(const motor_t *m, double position_rad)
+{
+    if (!isfinite(position_rad)) return 0.0f;
+    float hold = m->gravity_a != 0.0f ? m->gravity_a * cosf((float)position_rad + m->gravity_offset_rad) : 0.0f;
+    if (m->gravity2_a != 0.0f && m->gravity2_motor >= 0 && m->gravity2_motor < MOTOR_COUNT) {
+        double other = g_motors[m->gravity2_motor].last_position_rad;
+        if (isfinite(other))
+            hold += m->gravity2_a * cosf((float)(position_rad + m->gravity2_coupling * other) + m->gravity2_offset_rad);
+    }
+    return hold;
+}
+
 static float cascade_current(const motor_t *m, float speed_part_a, double position_rad,
                              motor_direction_t *drive, float *gravity_term_a)
 {
     float limit = m->speed.current_limit_a;
-    float hold = (m->gravity_a != 0.0f && isfinite(position_rad)) ?
-        m->gravity_a * cosf((float)position_rad + m->gravity_offset_rad) : 0.0f;
+    float hold = gravity_hold_a(m, position_rad);
     if (gravity_term_a) *gravity_term_a = hold;
     if (hold == 0.0f) {
         *drive = m->control_direction;
@@ -635,6 +746,7 @@ static void motor_control_step(motor_t *m, int64_t now_us, const control_rates_t
     int64_t sample_time_us = current.sample_time_us;
     /* Encoder timing belongs to the PCNT read, not the ADC DMA block. */
     encoder_sample_t encoder = encoder_sample(m->index);
+    if (isfinite(encoder.output_position_rad)) m->last_position_rad = encoder.output_position_rad;
     const bool valid = current_sample_usable(current.status) &&
         current.dma_block_samples >= SENSE_MIN_BLOCK_SAMPLES && isfinite(current.current_mean_a);
 
@@ -678,7 +790,7 @@ static void motor_control_step(motor_t *m, int64_t now_us, const control_rates_t
                     speed_pi_reset(&m->speed);
                     /* With GRAV the current loop keeps holding the link (signed
                      * cascade): do not drop its integrator here. */
-                    if(m->gravity_a==0.0f){pid_reset(&m->pid);m->pid.current_ref_a=0;}
+                    if(!has_gravity(m)){pid_reset(&m->pid);m->pid.current_ref_a=0;}
                     m->speed_current_a=0;
                     m->speed.last_update_us=encoder.time_us;
                 }
@@ -703,8 +815,11 @@ static void motor_control_step(motor_t *m, int64_t now_us, const control_rates_t
                 float projected=(m->control_direction==MOTOR_CCW ? -1 : 1)*encoder.output_speed_rad_s;
                 /* Inner saturation only blocks the speed integrator when the current
                  * loop drives in the motion direction. */
-                bool inner_high=m->drive_direction==m->control_direction &&
-                    m->pid.output_percent >= m->pid.output_max_percent-0.01f && m->pid.error_a>0;
+                bool inner_high=(m->drive_direction==m->control_direction &&
+                    m->pid.output_percent >= m->pid.output_max_percent-0.01f && m->pid.error_a>0) ||
+                    m->friction_breakaway; /* the breakaway push does the job: no windup */
+                /* Overspeed (e.g. just broke loose): drop the stored integral. */
+                if (projected > m->speed.reference_rad_s + OVERSPEED_BRAKE_RAD_S) m->speed.integral_a = 0;
                 if (speed_pi_update(&m->speed,projected,encoder.time_us,inner_high))
                     m->speed_current_a=m->speed.output_a;
                 else { stop_for_sensing=true; m->pending_speed_fault=true; }
@@ -718,8 +833,9 @@ static void motor_control_step(motor_t *m, int64_t now_us, const control_rates_t
     if (cascade && !stop_for_sensing && valid) {
         motor_direction_t drive;
         float gravity_term = 0.0f;
-        m->pid.current_ref_a = cascade_current(m, m->speed_current_a, encoder.output_position_rad,
-                                               &drive, &gravity_term);
+        m->friction_term_a = friction_feedforward(m, &encoder, encoder.time_us);
+        m->pid.current_ref_a = cascade_current(m, m->speed_current_a + m->friction_term_a,
+                                               encoder.output_position_rad, &drive, &gravity_term);
         m->gravity_holding = m->control_mode == CONTROL_MODE_POSITION && gravity_term != 0.0f &&
             m->pid.current_ref_a > 0 &&
             (m->position.state != POSITION_TRACK || m->speed_current_a == 0.0f);
@@ -736,9 +852,13 @@ static void motor_control_step(motor_t *m, int64_t now_us, const control_rates_t
     } else if (!cascade) {
         m->drive_direction = m->control_direction;
         m->gravity_holding = false;
+        m->friction_term_a = 0.0f; m->friction_breakaway = false; m->friction_stuck_since_us = 0;
     }
     if (m->control_mode != CONTROL_MODE_OPEN) {
-        if (!valid || m->drive_direction == MOTOR_STOP ||
+        /* An unusable CS block stops the motor unless the cascade can ride it through. */
+        bool ride_through = cascade && !valid && m->pid.last_sample_us &&
+            m->current_invalid_streak < CURRENT_RIDE_THROUGH_BLOCKS && m->drive_direction != MOTOR_STOP;
+        if ((!valid && !ride_through) || m->drive_direction == MOTOR_STOP ||
             (!direction_change_brake && motor_driving(m) && m->drive_direction != m->direction) ||
             (m->pid.last_sample_us && now_us-m->pid.last_sample_us >= SENSE_PID_LOSS_TIMEOUT_US))
             stop_for_sensing = true;
@@ -762,11 +882,23 @@ static void motor_control_step(motor_t *m, int64_t now_us, const control_rates_t
             apply_pid_output = true;
         } else if (!stop_for_sensing && sample_time_us > m->pid.last_sample_us) {
             if (pi_update_sample(&m->pid, current.current_mean_a, sample_time_us)) {
+                m->current_invalid_streak = 0;
                 pid_output_percent = m->pid.output_percent;
                 /* Static-friction feed-forward: cascade only, when driving the motion
                  * (never in pure current mode, keeping the identified plant intact). */
                 if (cascade && m->drive_direction == m->control_direction && m->speed_current_a > 0 &&
                     m->friction_pwm > 0)
+                    pid_output_percent = fminf(m->pid.output_max_percent, pid_output_percent + m->friction_pwm);
+                pid_direction = m->drive_direction;
+                apply_pid_output = true;
+            } else if (cascade && !valid && m->pid.last_sample_us &&
+                       m->current_invalid_streak < CURRENT_RIDE_THROUGH_BLOCKS &&
+                       sample_time_us - m->pid.last_sample_us < 10000) {
+                /* Isolated bad CS block: hold the last output. */
+                m->current_invalid_streak++;
+                m->current_ride_through_total++;
+                pid_output_percent = m->pid.output_percent;
+                if (m->drive_direction == m->control_direction && m->speed_current_a > 0 && m->friction_pwm > 0)
                     pid_output_percent = fminf(m->pid.output_max_percent, pid_output_percent + m->friction_pwm);
                 pid_direction = m->drive_direction;
                 apply_pid_output = true;
@@ -790,6 +922,14 @@ static void motor_control_step(motor_t *m, int64_t now_us, const control_rates_t
     t->hold_brake = m->hold_brake;
     t->gravity_holding = m->gravity_holding;
     t->friction_pwm = m->friction_pwm;
+    t->friction_ic_a = m->friction_ic_a;
+    t->friction_is_a = m->friction_is_a;
+    t->friction_term_a = m->friction_term_a;
+    t->friction_breakaway = m->friction_breakaway;
+    t->gravity2_a = m->gravity2_a; t->gravity2_offset_rad = m->gravity2_offset_rad;
+    t->gravity2_coupling = m->gravity2_coupling; t->gravity2_motor = m->gravity2_motor;
+    t->fmap_bins[0] = m->fmap[0].valid ? m->fmap[0].n : 0;
+    t->fmap_bins[1] = m->fmap[1].valid ? m->fmap[1].n : 0;
     t->gravity_a = m->gravity_a;
     t->gravity_offset_rad = m->gravity_offset_rad;
     t->adc_sample_count = current.total_samples;
@@ -839,7 +979,14 @@ static void motor_control_step(motor_t *m, int64_t now_us, const control_rates_t
         if (!drv_fault && !m->pending_speed_fault && !m->pending_position_fault &&
             (duty_ticks > 0 || m->control_mode != CONTROL_MODE_OPEN))
             m->pending_current_fault = valid ? CURRENT_OUTPUT_SETTLING : current.status;
+        /* A joint under gravity is left braked (both low sides on) after a sensing
+         * fault in the cascade, so it does not fall freely; STOP releases it. A DRV
+         * fault always coasts. */
+        bool keep_brake = !drv_fault && m->hold_brake && has_gravity(m) &&
+            (cascade || (m->control_mode == CONTROL_MODE_OPEN && m->direction == MOTOR_BRAKE &&
+                         !m->sequence.active));
         control_stop(m);
+        if (keep_brake) motor_set_output(m, MOTOR_BRAKE, 0);
     } else if (apply_pid_output) {
         motor_set_output_percent(m, pid_direction, pid_output_percent);
     }
@@ -998,6 +1145,49 @@ static void handle_motor_command(motor_t *m, char *command)
         return;
     }
 
+    /* FRICI,ic_a,is_a: friction feed-forward added to the current reference in
+     * SPEED/POSITION. Ic while moving, ramping to Is while stuck (Is >= Ic). */
+    if (strcmp(command, "FRICI") == 0) {
+        float ic, is; char *a = strtok(NULL, ","), *b = strtok(NULL, ",");
+        if (!control_parse_float(a, &ic) || !control_parse_float(b, &is) || strtok(NULL, ",") ||
+            ic < 0 || is < 0 || ic > FRIC_MAX_A || is > FRIC_MAX_A || is < ic) {
+            reply("ERR,FRICI,expected_0<=ic<=is<=0.5\n"); return;
+        }
+        portENTER_CRITICAL(&g_state_lock);
+        m->friction_ic_a = ic; m->friction_is_a = is;
+        portEXIT_CRITICAL(&g_state_lock);
+        reply("ACK,FRICI,%.4f,%.4f\n", ic, is);
+        return;
+    }
+
+    /* FMAP,+|-,start_rad,step_rad,a0,a1,...  (2..48 values, 0..0.5 A) or FMAP,CLEAR */
+    if (strcmp(command, "FMAP") == 0) {
+        char *d = strtok(NULL, ",");
+        if (d && strcmp(d, "CLEAR") == 0 && !strtok(NULL, ",")) {
+            portENTER_CRITICAL(&g_state_lock);
+            m->fmap[0].valid = m->fmap[1].valid = false;
+            portEXIT_CRITICAL(&g_state_lock);
+            reply("ACK,FMAP,CLEAR\n"); return;
+        }
+        int idx = d && strcmp(d, "+") == 0 ? 0 : d && strcmp(d, "-") == 0 ? 1 : -1;
+        fric_map_t f = { .valid = true, .n = 0 };
+        bool ok = idx >= 0 && control_parse_float(strtok(NULL, ","), &f.start_rad) &&
+                  control_parse_float(strtok(NULL, ","), &f.step_rad) && f.step_rad >= 0.005f && f.step_rad <= 1.0f &&
+                  fabsf(f.start_rad) <= 100.0f;
+        char *tok;
+        while (ok && (tok = strtok(NULL, ",")) != NULL) {
+            float v;
+            if (f.n >= FMAP_MAX_BINS || !control_parse_float(tok, &v) || v < 0 || v > FRIC_MAX_A) { ok = false; break; }
+            f.amps[f.n++] = v;
+        }
+        if (!ok || f.n < 2) { reply("ERR,FMAP,expected_+|-,start,step,2..48_values_0..0.5A_or_CLEAR\n"); return; }
+        portENTER_CRITICAL(&g_state_lock);
+        m->fmap[idx] = f;
+        portEXIT_CRITICAL(&g_state_lock);
+        reply("ACK,FMAP,%s,%d,%.3f,%.3f\n", idx ? "-" : "+", f.n, f.start_rad, f.step_rad);
+        return;
+    }
+
     /* GRAV,amps,offset_rad: current feed-forward amps*cos(position + offset),
      * positive when gravity pulls the joint toward negative positions. */
     if (strcmp(command, "GRAV") == 0) {
@@ -1011,6 +1201,27 @@ static void handle_motor_command(motor_t *m, char *command)
         m->gravity_offset_rad = offset;
         portEXIT_CRITICAL(&g_state_lock);
         reply("ACK,GRAV,%.4f,%.4f\n", amps, offset);
+        return;
+    }
+
+    /* GRAV2,amps,offset_rad,motor(1..3 or 0=off),coupling: second gravity term
+     * amps*cos(position + coupling*position[motor] + offset). */
+    if (strcmp(command, "GRAV2") == 0) {
+        float amps, offset, coupling, motor_f;
+        char *a = strtok(NULL, ","), *b = strtok(NULL, ","), *c = strtok(NULL, ","), *d = strtok(NULL, ",");
+        if (!control_parse_float(a, &amps) || !control_parse_float(b, &offset) || !control_parse_float(c, &motor_f) ||
+            !control_parse_float(d, &coupling) || strtok(NULL, ",") || fabsf(amps) > PI_REFERENCE_MAX_A ||
+            fabsf(offset) > 10 || fabsf(coupling) > 2 || motor_f != floorf(motor_f) || motor_f < 0 ||
+            motor_f > MOTOR_COUNT || (int)motor_f - 1 == m->index) {
+            reply("ERR,GRAV2,expected_amps,offset_rad,other_motor_1to3_or_0,coupling_-2to2\n"); return;
+        }
+        portENTER_CRITICAL(&g_state_lock);
+        m->gravity2_a = motor_f == 0 ? 0.0f : amps;
+        m->gravity2_offset_rad = offset;
+        m->gravity2_motor = (int)motor_f - 1;
+        m->gravity2_coupling = coupling;
+        portEXIT_CRITICAL(&g_state_lock);
+        reply("ACK,GRAV2,%.4f,%.4f,%d,%.2f\n", m->gravity2_a, offset, (int)motor_f, coupling);
         return;
     }
 
@@ -1160,10 +1371,10 @@ static void handle_motor_command(motor_t *m, char *command)
             speed_pi_reset(&m->speed);m->speed.reference_rad_s=0;m->speed.last_update_us=enc.time_us;
             m->speed_current_a=0;
             /* With GRAV keep holding the link while the new target is taken. */
-            if(m->gravity_a==0.0f){pid_reset(&m->pid);m->pid.current_ref_a=0;}
+            if(!has_gravity(m)){pid_reset(&m->pid);m->pid.current_ref_a=0;}
         }
         portEXIT_CRITICAL(&g_state_lock);
-        if(m->control_mode==CONTROL_MODE_POSITION && m->gravity_a==0.0f)motor_set_output(m, MOTOR_STOP,0);
+        if(m->control_mode==CONTROL_MODE_POSITION && !has_gravity(m))motor_set_output(m, MOTOR_STOP,0);
         reply("ACK,PREF,%.6f\n",ref);return;
     }
     /* PPI / PLIMIT are accepted while POSITION is active (bumpless: the
@@ -1378,7 +1589,8 @@ static void multi_print_motor(const telemetry_t *t)
     float speed_ref = speed_loop ? t->speed.reference_rad_s * (float)t->control_direction_sign : 0.0f;
     int flags = (t->position_reference_set ? 1 : 0) | (t->encoder.speed_valid ? 2 : 0) |
                 (t->sequence_active ? 4 : 0) | (t->nfault_active ? 8 : 0) |
-                (t->direction == MOTOR_BRAKE ? 16 : 0) | (t->gravity_holding ? 32 : 0);
+                (t->direction == MOTOR_BRAKE ? 16 : 0) | (t->gravity_holding ? 32 : 0) |
+                (t->friction_breakaway ? 64 : 0);
     printf(",%d,%.2f,%.4f,%.4f,%.5f,%.4f,%.4f,%.5f,%d,%d,%d",
            (int)t->control_mode, t->duty_percent, t->current_mean_a,
            t->control_mode == CONTROL_MODE_OPEN ? 0.0f : t->current_ref_a,
@@ -1391,13 +1603,15 @@ static void multi_print_motor(const telemetry_t *t)
 /* Settings of one motor, round-robin at ~3 Hz per motor in MULTI mode. */
 static void multi_print_config(int motor, const telemetry_t *t)
 {
-    printf("CFG,M%d,%s,%.4f,%.4f,%.3f,%.3f,%.6f,%.6f,%.4f,%.4f,%.4f,%.4f,%.4f,%.5f,%d,%d,%.2f,%.4f,%.4f\n",
+    printf("CFG,M%d,%s,%.4f,%.4f,%.3f,%.3f,%.6f,%.6f,%.4f,%.4f,%.4f,%.4f,%.4f,%.5f,%d,%d,%.2f,%.4f,%.4f,%.4f,%.4f,%d,%d,%.4f,%.4f,%d,%.2f\n",
            motor + 1, k_motor_names[motor], t->pid_kp, t->pid_ki,
            t->pid_output_min_percent, t->pid_output_max_percent,
            t->speed.kp, t->speed.ki, t->speed.current_limit_a,
            t->position.kp, t->position.ki, t->position.max_speed_rad_s,
            t->position.accel_rad_s2, t->position.tolerance_rad, encoder_get_sign(motor),
-           t->hold_brake ? 1 : 0, t->friction_pwm, t->gravity_a, t->gravity_offset_rad);
+           t->hold_brake ? 1 : 0, t->friction_pwm, t->gravity_a, t->gravity_offset_rad,
+           t->friction_ic_a, t->friction_is_a, t->fmap_bins[0], t->fmap_bins[1],
+           t->gravity2_a, t->gravity2_offset_rad, t->gravity2_motor + 1, t->gravity2_coupling);
 }
 
 static void print_info(void)
@@ -1466,13 +1680,15 @@ static void handle_serial_command(char *line)
                 encoder_sample_t e = encoder_sample(i);
                 current_sample_t c = current_sense_read(i);
                 printf("DIAG,M%d,%s,ADC1_CH%d,count=%lu,accepted=%lu,saturated=%lu,raw_min=%d,raw_max=%d,"
-                       "raw_mean=%.1f,status=%d,current_a=%.4f,enc_count=%lld,pos_rad=%.4f,speed_valid=%d,nfault_low=%d,mode=%s\n",
+                       "raw_mean=%.1f,status=%d,current_a=%.4f,enc_count=%lld,pos_rad=%.4f,speed_valid=%d,nfault_low=%d,mode=%s,"
+                       "cs_ride_through=%lu\n",
                        i + 1, k_motor_names[i], k_adc_channel[i], (unsigned long)d.ch[i].count,
                        (unsigned long)d.ch[i].accepted, (unsigned long)d.ch[i].saturated,
                        d.ch[i].raw_min, d.ch[i].raw_max, d.ch[i].raw_mean, (int)c.status,
                        c.current_mean_a, (long long)e.count_x4, e.output_position_rad,
                        e.speed_valid ? 1 : 0, g_motors[i].telemetry.nfault_active ? 1 : 0,
-                       control_mode_to_text(g_motors[i].control_mode));
+                       control_mode_to_text(g_motors[i].control_mode),
+                       (unsigned long)g_motors[i].current_ride_through_total);
             }
             return;
         }
@@ -1559,9 +1775,19 @@ static void motor_init_state(motor_t *m, int index)
     m->drive_direction = MOTOR_CW;
     m->pending_current_fault = CURRENT_UNINITIALIZED;
     m->hold_brake = true;
-    m->friction_pwm = 0.0f;   /* tune per joint with FRIC */
+    m->friction_pwm = 0.0f;   /* legacy PWM feed-forward (FRIC) */
+    m->friction_ic_a = 0.0f;  /* tune per joint with FRICI */
+    m->friction_is_a = 0.0f;
+    m->friction_term_a = 0.0f;
+    m->friction_breakaway = false;
+    m->friction_stuck_since_us = 0;
+    m->current_invalid_streak = 0;
+    m->current_ride_through_total = 0;
+    m->fmap[0].valid = m->fmap[1].valid = false;
     m->gravity_a = 0.0f;      /* tune per joint with GRAV */
     m->gravity_offset_rad = 0.0f;
+    m->gravity2_a = 0.0f; m->gravity2_offset_rad = 0.0f; m->gravity2_coupling = 0.0f;
+    m->gravity2_motor = -1; m->last_position_rad = 0.0;
 }
 
 void app_main(void)

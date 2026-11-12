@@ -92,6 +92,7 @@ esp_err_t adc_continuous_read(adc_continuous_handle_t h,uint8_t *buf,uint32_t ma
             if (mode==5) v.type1.data=i<HALF ? raw_value : 0;
             if (mode==6) v.type1.data=i%2 ? raw_value : 0;
             if (mode==7 && i==0) v.type1.data=4095;
+            if (mode==14 && i<=SENSE_MAX_SATURATED_PER_BLOCK) v.type1.data=4095; /* one too many */
         } else {
             v.type1.data=other_raw;
             if (mode==10 && c==1 && i==5) v.type1.data=4095;
@@ -159,12 +160,16 @@ int main(void)
     CHECK(fabsf(L.current_mean_a-.249f/SENSE_CS_VOLTS_PER_AMP)<1e-6f && L.dma_block_samples==N);
     CHECK(latest[1].dma_block_samples==N && latest[2].dma_block_samples==N);
     uint32_t rq=L.rejected_quality;
-    run(600,249,7,1); /* One saturated sample invalidates the whole block of that channel. */
+    run(600,249,7,1); /* One clipped sample (brush spike) is kept at full scale: block still usable. */
+    CHECK(current_sample_usable(L.status) && L.dma_block_samples==N && L.rejected_quality==rq);
+    CHECK(fabsf(L.adc_raw_mean-((N-1)*249.0f+4095.0f)/N)<1e-3f && current_sense_diag().ch[0].saturated==1);
+    CHECK(latest[1].dma_block_samples==N && current_sample_usable(latest[1].status));
+    run(600,249,14,1); /* More than SENSE_MAX_SATURATED_PER_BLOCK clipped: block rejected. */
     CHECK(L.status==CURRENT_ADC_SATURATED && L.rejected_quality-rq==N && L.dma_block_samples==0);
     CHECK(isnan(L.adc_raw_mean) && isnan(L.adc_voltage_mean) && isnan(L.current_mean_a));
     CHECK(latest[1].dma_block_samples==N && current_sample_usable(latest[1].status));
-    run(600,249,10,1); /* Saturation on channel 1 only. */
-    CHECK(latest[1].status==CURRENT_ADC_SATURATED && isnan(latest[1].current_mean_a));
+    run(600,249,10,1); /* One clipped sample on channel 1 only: tolerated. */
+    CHECK(current_sample_usable(latest[1].status) && latest[1].dma_block_samples==N);
     CHECK(L.dma_block_samples==N && latest[2].dma_block_samples==N);
     run(600,249,11,1); /* N+1/N/N-1 split is tolerated; means use actual counts. */
     CHECK(L.dma_block_samples==N+1 && latest[2].dma_block_samples==N-1 && latest[1].dma_block_samples==N);
