@@ -63,6 +63,17 @@ canvas { width: 100%; display: block; background: var(--panel2); border-radius: 
 .legend { display: flex; gap: 12px; font-size: 11px; color: var(--muted); margin: 4px 0; }
 .legend span:not(.x)::before { content: ""; display: inline-block; width: 14px; height: 2px; margin-right: 4px;
   vertical-align: middle; background: currentColor; }
+.tngrid { display: grid; grid-template-columns: 1.3fr 1.3fr 0.8fr; gap: 10px; margin-top: 8px; }
+@media (max-width: 1100px) { .tngrid { grid-template-columns: 1fr; } }
+.tngrid fieldset { border: 1px solid var(--line); border-radius: 8px; display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: end; padding: 6px 10px 10px; min-width: 0; }
+.tngrid legend { color: var(--muted); font-size: 12px; padding: 0 4px; }
+.tntab { border-collapse: collapse; width: 100%; margin-top: 10px; font-size: 12px; font-variant-numeric: tabular-nums; }
+.tntab th, .tntab td { border-bottom: 1px solid var(--line); padding: 4px 6px; text-align: left; white-space: nowrap; }
+.tntab th { color: var(--muted); font-weight: 500; }
+.tntab td.good { color: var(--ok); } .tntab td.bad { color: var(--err); } .tntab td.meh { color: var(--warn); }
+.tnplots { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 10px; }
+@media (max-width: 1100px) { .tnplots { grid-template-columns: 1fr; } }
+.tncmd { background: var(--panel2); border-radius: 6px; padding: 8px; font: 12px/1.4 Consolas, monospace; margin: 8px 0 0; white-space: pre-wrap; }
 </style>
 </head>
 <body>
@@ -110,6 +121,74 @@ canvas { width: 100%; display: block; background: var(--panel2); border-radius: 
       pon un rango que <b>incluya esa posición colgando</b> (por ejemplo −1.4 … +0.5 rad si colgar es −1.57). Si no puedes, desmarca 1 y 2:
       el vaivén también da la fricción. El vaivén recorre el rango entero (con 0.1 rad de margen) y termina sostenido en el centro.
       Seguridad: si se sale del rango más de 0.08 rad, pasa de 0.65 A durante 0.3 s o salta nFAULT, el motor se detiene solo.</div>
+  </div>
+  <div class="card" id="tuneCard" style="margin-top:12px">
+    <h2>Sintonía de la cascada por asignación de polos</h2>
+    <div class="cfg" style="margin:4px 0 8px">Corriente (1 kHz) ← Velocidad (100 Hz, ventana 20 ms) ← Posición (50 Hz).
+      Pon el desempeño que quieres en cada lazo; el panel calcula las ganancias, verifica márgenes, separación de frecuencias
+      y polos discretos, y simula la cascada con fricción, gravedad, zona muerta y cuantización del encoder.
+      Las mismas cuentas, comparadas con las ganancias actuales del ESP32.</div>
+    <div class="row" style="align-items:end">
+      <label class="atl">Articulación<select id="tnMotor"><option value="0">M1 Coxa</option><option value="1" selected>M2 Fémur</option><option value="2">M3 Tibia</option></select></label>
+      <button id="tnIdent" title="Parámetros identificados con MATLAB (11-nov)">Planta identificada</button>
+      <button id="tnRead" title="Copia las ganancias que reporta el ESP32 (CFG) a 'Actuales'">Leer ganancias del ESP32</button>
+      <button id="tnFast" title="Pone cada ts en 1.15× el mínimo alcanzable">Lo más rápido factible</button>
+    </div>
+    <div class="tngrid">
+      <fieldset><legend>Planta (unidades del firmware)</legend>
+        <label class="atl" title="Corriente CS por % de PWM, del vaivén">a (A/%)<input type="number" step="0.0001" id="tn_a"></label>
+        <label class="atl" title="PWM por debajo del cual el CS no ve corriente">Zona muerta (%)<input type="number" step="1" id="tn_u0"></label>
+        <label class="atl" title="Caída de la corriente medida por rad/s (FEM)">ke (A·s/rad)<input type="number" step="0.0005" id="tn_ke"></label>
+        <label class="atl" title="Constante eléctrica L/R">τe (ms)<input type="number" step="0.05" id="tn_te"></label>
+        <label class="atl">Jeq (A·s²/rad)<input type="number" step="0.0001" id="tn_J"></label>
+        <label class="atl">b (A·s/rad)<input type="number" step="0.0005" id="tn_b"></label>
+        <label class="atl">Ic Coulomb (A)<input type="number" step="0.005" id="tn_Ic"></label>
+        <label class="atl">Is estática (A)<input type="number" step="0.005" id="tn_Is"></label>
+        <label class="atl">G (A)<input type="number" step="0.005" id="tn_G"></label>
+        <label class="atl">θ₀ (rad)<input type="number" step="0.05" id="tn_th0"></label>
+        <label class="atl">FRIC (%)<input type="number" step="1" id="tn_fric"></label>
+        <label class="atl">ILIMIT (A)<input type="number" step="0.01" id="tn_ilim"></label>
+      </fieldset>
+      <fieldset><legend>Desempeño deseado</legend>
+        <label class="atl" title="Tiempo de establecimiento al 2 % del lazo de corriente">Corriente ts (ms)<input type="number" step="1" min="1" id="tn_tsi" value="15"></label>
+        <label class="atl">Velocidad ts (s)<input type="number" step="0.05" min="0.05" id="tn_tsw" value="0.4"></label>
+        <label class="atl">Velocidad Mp (%)<input type="number" step="1" min="0" max="40" id="tn_mpw" value="0"></label>
+        <label class="atl">Posición ts (s)<input type="number" step="0.1" min="0.1" id="tn_tsp" value="1.0"></label>
+        <label class="atl">Posición Mp (%)<input type="number" step="1" min="0" max="40" id="tn_mpp" value="0"></label>
+        <label class="atl">Posición<select id="tn_ppi"><option value="0">P (recomendado)</option><option value="1">PI</option></select></label>
+        <label class="atl" title="Separación mínima entre lazos">Separación mín.<input type="number" step="0.5" min="2" id="tn_sep" value="4"></label>
+        <label class="atl">Escalón vel. (rad/s)<input type="number" step="0.1" id="tn_sw" value="1"></label>
+        <label class="atl">Escalón pos. (rad)<input type="number" step="0.1" id="tn_sp" value="0.5"></label>
+        <label class="atl">vmax (rad/s)<input type="number" step="0.5" id="tn_vmax" value="3"></label>
+        <label class="atl">Acel. (rad/s²)<input type="number" step="1" id="tn_acc" value="15"></label>
+      </fieldset>
+      <fieldset><legend>Ganancias actuales (para comparar)</legend>
+        <label class="atl">PI corriente Kp<input type="number" step="any" id="tn_ckpi" value="8.832"></label>
+        <label class="atl">Ki<input type="number" step="any" id="tn_ckii" value="80090"></label>
+        <label class="atl">PI velocidad Kp<input type="number" step="any" id="tn_ckpw" value="0.0284"></label>
+        <label class="atl">Ki<input type="number" step="any" id="tn_ckiw" value="0.01392"></label>
+        <label class="atl">PI posición Kp<input type="number" step="any" id="tn_ckpp" value="6.166"></label>
+        <label class="atl">Ki<input type="number" step="any" id="tn_ckip" value="3192"></label>
+      </fieldset>
+    </div>
+    <div id="tnWarn" class="cfg" style="color:var(--warn);font-size:12px"></div>
+    <div style="overflow-x:auto"><table class="tntab" id="tnTable"></table></div>
+    <div id="tnChecks" class="cfg" style="font-size:12px;color:var(--text)"></div>
+    <div class="tnplots">
+      <div><div class="sub">Corriente: escalón de referencia</div><canvas id="tnPi" height="150"></canvas></div>
+      <div><div class="sub">Velocidad: escalón (desde reposo, con fricción)</div><canvas id="tnPw" height="150"></canvas></div>
+      <div><div class="sub">Posición: escalón con vmax/acel (como Ir a posición)</div><canvas id="tnPp" height="150"></canvas></div>
+    </div>
+    <div class="legend"><span style="color:var(--ref)">referencia</span><span style="color:var(--ok)">diseño</span><span style="color:var(--muted)">actuales</span><span class="x" id="tnMetr"></span></div>
+    <pre id="tnCmd" class="tncmd"></pre>
+    <div class="row">
+      <label class="atc"><input type="checkbox" id="tnComp" checked> incluir FRIC, GRAV e ILIMIT</label>
+      <button class="primary" id="tnSend">Enviar al ESP32</button>
+      <button id="tnCopy">Copiar comandos</button>
+    </div>
+    <div class="cfg">Modelo: corriente discreta exacta (1 kHz, 1 muestra de retardo); velocidad y posición con el retardo de muestreo y de la
+      ventana del encoder como un polo 1/(τs+1), de modo que se asignan 2 polos dominantes y el tercero lo fija la planta (debe quedar ≥3× más rápido).
+      La verificación usa los retardos exactos. Las ganancias valen para la escala de encoder actual: si cambias las cuentas por vuelta, repite la identificación.</div>
   </div>
   <div class="bottom">
     <div class="card">
@@ -270,7 +349,7 @@ const actions = {
   },
   comp: (i) => {
     const fr = num("fric" + i), g = num("grav" + i), o = num("gofs" + i);
-    if (!(fr >= 0 && fr <= 40) || !(Math.abs(g) <= 1) || !(Math.abs(o) <= 10)) return log("UI: compensación fuera de rango", "err");
+    if (!(fr >= 0 && fr <= 70) || !(Math.abs(g) <= 1) || !(Math.abs(o) <= 10)) return log("UI: compensación fuera de rango", "err");
     send(P(i) + "HOLD," + document.getElementById("hold" + i).value);
     send(P(i) + "FRIC," + fr.toFixed(2));
     send(P(i) + `GRAV,${g.toFixed(4)},${o.toFixed(4)}`);
@@ -792,6 +871,414 @@ async function atRun() {
 }
 document.getElementById("atStart").onclick = atRun;
 document.getElementById("atAbort").onclick = () => { if (AT.running) AT.abort = "abortado por el usuario"; };
+/* Núcleo de sintonía por asignación de polos (compartido por el dashboard y las pruebas). */
+const TUNE = (() => {
+  const TS_I = 0.001, TS_W = 0.010, TS_P = 0.020, WIN = 0.020;
+  const cx = (re, im = 0) => ({ re, im });
+  const add = (a, b) => cx(a.re + b.re, a.im + b.im);
+  const mul = (a, b) => cx(a.re * b.re - a.im * b.im, a.re * b.im + a.im * b.re);
+  const div = (a, b) => { const d = b.re * b.re + b.im * b.im; return cx((a.re * b.re + a.im * b.im) / d, (a.im * b.re - a.re * b.im) / d); };
+  const abs = (a) => Math.hypot(a.re, a.im);
+  const ang = (a) => Math.atan2(a.im, a.re);
+  const expj = (t) => cx(Math.cos(t), Math.sin(t));
+
+  function zetaFromMp(mp) { if (mp <= 0.01) return 1; const l = Math.log(mp / 100); return -l / Math.sqrt(Math.PI * Math.PI + l * l); }
+  function mpFromZeta(z) { return z >= 1 ? 0 : 100 * Math.exp(-Math.PI * z / Math.sqrt(1 - z * z)); }
+
+  /* ---- Diseño: asignación de polos dominantes incluyendo retardos ---- */
+  const cexp = (z) => { const e = Math.exp(z.re); return cx(e * Math.cos(z.im), e * Math.sin(z.im)); };
+  const TAU_W = TS_W / 2 + WIN / 2, TAU_P = TS_P / 2, TAU_I = 1.5 * TS_I;
+  function TiS(plant, g, s) { // lazo de corriente cerrado evaluado en s complejo
+    const C = add(cx(g.kp_i), div(cx(g.ki_i), s));
+    const L = mul(mul(cx(plant.a), C), cexp(mul(cx(-TAU_I), s)));
+    return div(L, add(cx(1), L));
+  }
+  function TwS(plant, g, s) {
+    const C = add(cx(g.kp_w), div(cx(g.ki_w), s));
+    const P = div(cx(1), add(mul(cx(plant.J), s), cx(plant.b)));
+    const L = mul(mul(mul(C, TiS(plant, g, s)), P), cexp(mul(cx(-TAU_W), s)));
+    return div(L, add(cx(1), L));
+  }
+  /* Asignación de polos con el retardo modelado como un polo 1/(τs+1):
+   *   velocidad: Jτ s³ + (J+bτ) s² + (b+Kp) s + Ki = Jτ (s²+2ζωn s+ωn²)(s+p3)
+   *   posición PI: τp s³ + s² + Kp s + Ki = τp (s²+2ζωn s+ωn²)(s+p3)
+   *   posición P:  τp s² + s + Kp = 0 con el polo lento en -4/ts
+   * p3 lo fija la planta; la especificación es alcanzable si p3 >= 3·ζωn (par dominante). */
+  const DOM = 3;
+  function tauW(spec) { return TS_W / 2 + WIN / 2 + spec.ts_i / 4; }
+  function design(plant, spec) {
+    const g = { warn: [], info: {} };
+    // Corriente: objetivo de 1er orden, discreto exacto con 1 muestra de retardo; Kp cancela τe.
+    const wi = 4 / spec.ts_i, pz = Math.exp(-wi * TS_I);
+    g.ki_i = (1 - pz) / (plant.a * TS_I);
+    g.kp_i = g.ki_i * plant.tau_e;
+    g.info.ts_i_min = -4 * TS_I / Math.log(1 - 0.5 / 1); // polo real en z=0.5 -> límite práctico
+    if (pz < 0.5) g.warn.push(`Corriente: ts=${(spec.ts_i * 1e3).toFixed(1)} ms pide el polo discreto en z=${pz.toFixed(2)} (< 0.5); con 1 kHz de muestreo usa ts ≥ ${(g.info.ts_i_min * 1e3).toFixed(1)} ms.`);
+    // Velocidad
+    const tw = tauW(spec), zw = Math.min(1, zetaFromMp(spec.mp_w)), sw = 4 / spec.ts_w, wnw = sw / zw;
+    const p3w = 1 / tw + plant.b / plant.J - 2 * sw;
+    g.info.tau_w = tw; g.info.p3_w = p3w; g.info.zeta_w = zw; g.info.wn_w = wnw;
+    g.info.ts_w_min = 4 * (2 + DOM) / (1 / tw + plant.b / plant.J);
+    g.kp_w = plant.J * tw * (wnw * wnw + 2 * sw * p3w) - plant.b;
+    g.ki_w = plant.J * tw * wnw * wnw * p3w;
+    if (p3w < DOM * sw) g.warn.push(`Velocidad: ts=${spec.ts_w} s es demasiado rápido para el retardo de ${(tw * 1e3).toFixed(0)} ms (el tercer polo no queda ${DOM}× más rápido). Mínimo ≈ ${g.info.ts_w_min.toFixed(2)} s.`);
+    if (g.kp_w < 0) { g.warn.push("Velocidad: Kp negativo (la fricción viscosa ya amortigua más de lo pedido); se fija en 0."); g.kp_w = 0; }
+    if (g.ki_w <= 0) { g.warn.push("Velocidad: Ki ≤ 0; especificación no alcanzable."); g.ki_w = 0; }
+    // Retardo equivalente del lazo de velocidad cerrado visto por posición (primer momento).
+    const zero = g.ki_w > 0 && g.kp_w > 0 ? g.kp_w / g.ki_w : 0;
+    const tp = Math.max(TS_P / 2, 2 * zw / wnw + (p3w > 0 ? 1 / p3w : 0) - zero) + TS_P / 2;
+    g.info.tau_p = tp;
+    if (spec.pos_pi) {
+      const zp = Math.min(1, zetaFromMp(spec.mp_p)), sp = 4 / spec.ts_p, wnp = sp / zp, p3 = 1 / tp - 2 * sp;
+      g.info.ts_p_min = 4 * (2 + DOM) * tp;
+      g.kp_p = tp * (wnp * wnp + 2 * sp * p3); g.ki_p = tp * wnp * wnp * p3;
+      if (p3 < DOM * sp) g.warn.push(`Posición: ts=${spec.ts_p} s es demasiado rápido para el lazo de velocidad. Mínimo ≈ ${g.info.ts_p_min.toFixed(2)} s.`);
+      if (g.ki_p < 0) { g.ki_p = 0; }
+    } else {
+      const sp = 4 / spec.ts_p;
+      g.info.ts_p_min = 8 * tp;
+      g.kp_p = sp - tp * sp * sp; g.ki_p = 0;
+      if (spec.ts_p < g.info.ts_p_min) { g.warn.push(`Posición: con solo P el más rápido sin oscilar es ts ≈ ${g.info.ts_p_min.toFixed(2)} s.`); g.kp_p = 1 / (4 * tp); }
+    }
+    if (g.kp_p < 0) { g.warn.push("Posición: Kp negativo; especificación no alcanzable."); g.kp_p = 0; }
+    return g;
+  }
+
+  /* ---- Lazos (continuo con retardos puros) ---- */
+  function loops(plant, g) {
+    const Li = (w) => { // corriente: a(Kp + Ki/s) e^{-s 1.5 Ts}
+      const s = cx(0, w); const C = add(cx(g.kp_i), div(cx(g.ki_i), s));
+      return mul(mul(cx(plant.a), C), expj(-w * 1.5 * TS_I));
+    };
+    const Ti = (w) => { const L = Li(w); return div(L, add(cx(1), L)); };
+    const Lw = (w) => { // velocidad: (Kp+Ki/s) Ti 1/(Js+b) e^{-s(Ts/2 + win/2)}
+      const s = cx(0, w); const C = add(cx(g.kp_w), div(cx(g.ki_w), s));
+      const P = div(cx(1), add(mul(cx(plant.J), s), cx(plant.b)));
+      return mul(mul(mul(C, Ti(w)), P), expj(-w * (TS_W / 2 + WIN / 2)));
+    };
+    const Tw = (w) => { const L = Lw(w); return div(L, add(cx(1), L)); };
+    const Lp = (w) => { // posición: (Kp+Ki/s) Tw (1/s) e^{-s Ts/2}
+      const s = cx(0, w); const C = add(cx(g.kp_p), div(cx(g.ki_p), s));
+      return mul(mul(mul(C, Tw(w)), div(cx(1), s)), expj(-w * TS_P / 2));
+    };
+    return { Li, Lw, Lp };
+  }
+
+  function margins(L) {
+    // barrido logarítmico 0.01 .. 20000 rad/s
+    let wc = NaN, pm = NaN, gm = Infinity, bw = NaN, peak = 0, prevMag = null, prevPh = null, prevW = null;
+    let unwrap = 0, lastRaw = null;
+    for (let k = 0; k <= 4000; k++) {
+      const w = 0.01 * Math.pow(2e6, k / 4000);
+      const Lv = L(w); const mag = abs(Lv);
+      let raw = ang(Lv);
+      if (lastRaw !== null) { let d = raw - lastRaw; if (d > Math.PI) unwrap -= 2 * Math.PI; if (d < -Math.PI) unwrap += 2 * Math.PI; }
+      lastRaw = raw; const ph = raw + unwrap;
+      const T = abs(div(Lv, add(cx(1), Lv)));
+      peak = Math.max(peak, T);
+      if (isNaN(bw) && T < Math.SQRT1_2 && k > 0) bw = w;
+      if (prevMag !== null && isNaN(wc) && prevMag >= 1 && mag < 1) { wc = w; pm = 180 + ph * 180 / Math.PI; }
+      if (prevPh !== null && prevPh > -Math.PI && ph <= -Math.PI) gm = Math.min(gm, -20 * Math.log10(mag));
+      prevMag = mag; prevPh = ph; prevW = w;
+    }
+    // normaliza PM a (-180,180]
+    while (pm > 180) pm -= 360; while (pm <= -180) pm += 360;
+    return { wc, fc: wc / (2 * Math.PI), pm, gm, bw, fbw: bw / (2 * Math.PI), peakDb: 20 * Math.log10(peak) };
+  }
+
+  /* ---- Polos discretos exactos de los lazos de corriente y velocidad ---- */
+  function roots(c) { // c[0] z^n + ... + c[n]; Durand-Kerner
+    const n = c.length - 1; const a = c.map((x) => x / c[0]);
+    let r = []; for (let i = 0; i < n; i++) r.push(mul(cx(0.4, 0.9), expj(0)).re !== undefined ? cx(Math.pow(0.4, i) * Math.cos(i), Math.pow(0.4, i) * Math.sin(i) + 0.1) : 0);
+    r = r.map((_, i) => mul(cx(0.9, 0), expj(2 * Math.PI * i / n + 0.4)));
+    const ev = (z) => { let v = cx(1); for (let i = 1; i <= n; i++) v = add(mul(v, z), cx(a[i])); return v; };
+    for (let it = 0; it < 500; it++) {
+      let maxd = 0;
+      for (let i = 0; i < n; i++) {
+        let den = cx(1); for (let j = 0; j < n; j++) if (j !== i) den = mul(den, add(r[i], cx(-r[j].re, -r[j].im)));
+        const d = div(ev(r[i]), den); r[i] = add(r[i], cx(-d.re, -d.im)); maxd = Math.max(maxd, abs(d));
+      }
+      if (maxd < 1e-13) break;
+    }
+    return r;
+  }
+  const pmul = (p, q) => { const r = new Array(p.length + q.length - 1).fill(0); p.forEach((x, i) => q.forEach((y, j) => r[i + j] += x * y)); return r; };
+  const padd = (p, q) => { const n = Math.max(p.length, q.length); const r = new Array(n).fill(0); p.forEach((x, i) => r[n - p.length + i] += x); q.forEach((x, i) => r[n - q.length + i] += x); return r; };
+  function discretePoles(plant, g) {
+    // corriente: z^2 + (aKp + aKiT - 1) z - aKp
+    const a = plant.a;
+    const ci = roots([1, a * g.kp_i + a * g.ki_i * TS_I - 1, -a * g.kp_i]);
+    // velocidad (T=10 ms): planta γ/(z-φ), medida (z+1)^2/(4z^2), lazo de corriente (1-pi)/(z-pi), PI Kp+KiT z/(z-1)
+    const T = TS_W, phi = Math.exp(-plant.b * T / plant.J), gam = (1 - phi) / plant.b;
+    const wi = margins(loops(plant, g).Li).wc || 1e4; const pi = Math.exp(-wi * T);
+    const den = pmul(pmul(pmul([1, -1], [1, -phi]), [4, 0, 0]), [1, -pi]);
+    const num = pmul(pmul([g.kp_w + g.ki_w * T, -g.kp_w], [gam * (1 - pi)]), [1, 2, 1]);
+    const cw = roots(padd(den, num));
+    const rmax = (r) => Math.max(...r.map(abs));
+    return { current: ci, speed: cw, rI: rmax(ci), rW: rmax(cw) };
+  }
+
+  function ok(r) { return r.mi.pm >= 45 && r.mw.pm >= 40 && r.mp.pm >= 45 && r.dp.rI < 1 && r.dp.rW < 1 && isFinite(r.mw.fc) && isFinite(r.mp.fc); }
+  // Tiempo de establecimiento mínimo alcanzable para un lazo manteniendo los márgenes.
+  function analyze(plant, g) {
+    const L = loops(plant, g);
+    const mi = margins(L.Li), mw = margins(L.Lw), mp = margins(L.Lp);
+    const dp = discretePoles(plant, g);
+    return { mi, mw, mp, dp, sepIW: mi.fc / mw.fc, sepWP: mw.fc / mp.fc };
+  }
+
+  /* ---- Simulación no lineal de la cascada (paso de 0.1 ms) ---- */
+  function simulate(plant, g, opt) {
+    const dt = 1e-4, cpr = opt.cpr || 2800, q = 2 * Math.PI / cpr;
+    let th = opt.theta0 || 0, w = 0, stuck = true;
+    let ui = 0, iI = 0, iW = 0, iP = 0, wrefOut = 0, Iref = 0, Imeas = 0, Iacc = 0, nacc = 0;
+    let u = 0, Ioutlast = 0;
+    const histTh = []; let wmeas = 0;
+    const out = { t: [], th: [], thr: [], w: [], wt: [], wr: [], I: [], Ir: [], u: [] };
+    const N = Math.round(opt.T / dt);
+    const mode = opt.mode; // 'current' | 'speed' | 'position'
+    let pref = th, prefTraj = th;
+    for (let k = 0; k <= N; k++) {
+      const t = k * dt;
+      // planta eléctrica + mecánica
+      const ue = Math.abs(u) > plant.u0 ? Math.sign(u) * (Math.abs(u) - plant.u0) : 0;
+      let I = plant.a * ue - plant.ke * w; if (u === 0 || I * u < 0) I = u === 0 ? 0 : 0;
+      const grav = plant.G * Math.cos(th + plant.th0);
+      const net = I - grav;
+      if (stuck) {
+        if (Math.abs(net) > plant.Is) { stuck = false; }
+      }
+      if (!stuck) {
+        const acc = (net - plant.Ic * Math.sign(w || net) - plant.b * w) / plant.J;
+        const wn = w + acc * dt;
+        if (w !== 0 && wn * w < 0 && Math.abs(net) < plant.Is) { w = 0; stuck = true; } else w = wn;
+      }
+      th += w * dt;
+      Iacc += I; nacc++;
+      // muestreo 1 kHz: corriente
+      if (k % 10 === 0) {
+        const thq = Math.round(th / q) * q;
+        histTh.push([t, thq]); while (histTh.length && t - histTh[0][0] > 0.05) histTh.shift();
+        Imeas = nacc ? Iacc / nacc : 0; Iacc = 0; nacc = 0;
+        // velocidad 100 Hz
+        if (k % 100 === 0 && mode !== 'current') {
+          let j = histTh.length - 1; while (j > 0 && t - histTh[j][0] < WIN - 1e-9) j--;
+          wmeas = (histTh[histTh.length - 1][1] - histTh[j][1]) / Math.max(t - histTh[j][0], 1e-6);
+          // posición 50 Hz
+          if (mode === 'position' && k % 200 === 0) {
+            const target = t >= opt.tStep ? opt.step : (opt.theta0 || 0);
+            const e = target - thq;
+            if (Math.abs(e) <= (opt.tol || 0.02)) { wrefOut = 0; iP = 0; }
+            else {
+              iP += g.ki_p * e * TS_P;
+              let req = g.kp_p * e + iP;
+              const b = Math.min(opt.vmax, Math.max(-opt.vmax, req));
+              const d = opt.acc * TS_P;
+              const r = Math.min(wrefOut + d, Math.max(wrefOut - d, b));
+              if ((req - r) * e > 0) iP -= g.ki_p * e * TS_P;
+              wrefOut = r;
+            }
+            prefTraj = target;
+          }
+          const wr = mode === 'speed' ? (t >= opt.tStep ? opt.step : 0) : wrefOut;
+          const e = wr - wmeas;
+          iW += g.ki_w * e * TS_W;
+          let req = g.kp_w * e + iW;
+          const lim = opt.ilimit;
+          if (req > lim) { if (e > 0) iW -= g.ki_w * e * TS_W; req = lim; }
+          if (req < -lim) { if (e < 0) iW -= g.ki_w * e * TS_W; req = -lim; }
+          const gff = opt.gravFF ? plant.G * Math.cos(thq + plant.th0) : 0;
+          Iref = req + gff;
+          out.wr.push(wr);
+        }
+        if (mode === 'current') Iref = t >= opt.tStep ? opt.step : 0;
+        // PI de corriente en magnitud con dirección por signo de Iref
+        const dir = Math.sign(Iref) || 1, mag = Math.abs(Iref);
+        const e = mag - dir * Imeas;
+        let cand = iI + g.ki_i * e * TS_I; let eff = g.kp_i * e + cand;
+        const ceil = opt.ceil || 100;
+        if (!((eff > ceil && e > 0) || (eff < 0 && e < 0))) iI = cand;
+        eff = Math.min(ceil, Math.max(0, eff));
+        const fric = (mag > 1e-4 && mode !== 'current') ? (opt.fric || 0) : 0;
+        u = mag > 1e-5 || eff > 0 ? dir * Math.min(100, eff + fric) : 0;
+        if (k % (mode === 'current' ? 10 : 100) === 0) {
+          out.t.push(t); out.th.push(th); out.thr.push(mode === 'position' ? prefTraj : 0); out.w.push(wmeas); out.wt.push(w);
+          out.I.push(Imeas); out.Ir.push(Iref); out.u.push(u);
+          if (mode === 'current') out.wr.push(0);
+        }
+      }
+    }
+    return out;
+  }
+
+  function stepMetrics(t, y, r, tStep) {
+    const i0 = t.findIndex((x) => x >= tStep); if (i0 < 0) return {};
+    const y0 = y[Math.max(0, i0 - 1)], yf = r, span = yf - y0; if (Math.abs(span) < 1e-9) return {};
+    let t10 = NaN, t90 = NaN, peak = -Infinity, ts = NaN;
+    for (let i = i0; i < t.length; i++) {
+      const p = (y[i] - y0) / span;
+      if (isNaN(t10) && p >= 0.1) t10 = t[i]; if (isNaN(t90) && p >= 0.9) t90 = t[i];
+      peak = Math.max(peak, p);
+    }
+    for (let i = t.length - 1; i >= i0; i--) { if (Math.abs((y[i] - yf) / span) > 0.05) { ts = (t[Math.min(i + 1, t.length - 1)] - tStep); break; } }
+    if (isNaN(ts)) ts = 0;
+    const ess = (yf - y[y.length - 1]) / span;
+    return { tr: t90 - t10, mp: Math.max(0, (peak - 1) * 100), ts, ess: ess * 100 };
+  }
+
+  return { ok, TS_I, TS_W, TS_P, WIN, design, analyze, simulate, stepMetrics, zetaFromMp, mpFromZeta };
+})();
+
+/* ---------- Sintonía por asignación de polos ---------- */
+// Identificación del 11-nov (CSV del ensayo automático, firmware pata_MOD_DRV, encoder 2800 cuentas/vuelta).
+const TN_IDENT = [
+  { a: 0.00292, u0: 20, ke: 0.0049, te: 0.2, J: 0.00061, b: 0.00527, Ic: 0.0455, Is: 0.06,  G: 0,      th0: 0,       fric: 29.4, ilim: 0.38 },
+  { a: 0.00268, u0: 20, ke: 0.0007, te: 0.2, J: 0.00154, b: 0.00582, Ic: 0.0407, Is: 0.054, G: 0.0932, th0: -2.7533, fric: 15.8, ilim: 0.30 },
+  { a: 0.00318, u0: 22, ke: 0.0046, te: 0.2, J: 0.00126, b: 0.01369, Ic: 0.0585, Is: 0.107, G: 0.0503, th0: -1.6809, fric: 27.0, ilim: 0.37 },
+];
+const TN_KEYS = ["a", "u0", "ke", "te", "J", "b", "Ic", "Is", "G", "th0", "fric", "ilim"];
+const tnEl = (id) => document.getElementById(id);
+const tnNum = (id) => num(id);
+let tnLast = null;
+
+function tnLoadIdent() {
+  const p = TN_IDENT[+tnEl("tnMotor").value];
+  TN_KEYS.forEach((k) => { tnEl("tn_" + k).value = p[k]; });
+  tnRun();
+}
+function tnReadCfg() {
+  const i = +tnEl("tnMotor").value, c = state[i].cfg;
+  if (!c) return log(`SINTONÍA: aún no llegó la configuración de M${i + 1} (conecta y espera ~1 s)`, "err");
+  tnEl("tn_ckpi").value = c.pidKp; tnEl("tn_ckii").value = c.pidKi;
+  tnEl("tn_ckpw").value = c.spiKp; tnEl("tn_ckiw").value = c.spiKi;
+  tnEl("tn_ckpp").value = c.ppiKp; tnEl("tn_ckip").value = c.ppiKi;
+  log(`SINTONÍA: ganancias actuales de M${i + 1} leídas del ESP32`, "ack");
+  tnRun();
+}
+function tnPlant() {
+  return { a: tnNum("tn_a"), u0: tnNum("tn_u0"), ke: tnNum("tn_ke"), tau_e: tnNum("tn_te") / 1000, J: tnNum("tn_J"),
+           b: tnNum("tn_b"), Ic: tnNum("tn_Ic"), Is: Math.max(tnNum("tn_Is"), tnNum("tn_Ic")), G: tnNum("tn_G"), th0: tnNum("tn_th0") };
+}
+function tnSpec() {
+  return { ts_i: tnNum("tn_tsi") / 1000, ts_w: tnNum("tn_tsw"), mp_w: tnNum("tn_mpw"),
+           ts_p: tnNum("tn_tsp"), mp_p: tnNum("tn_mpp"), pos_pi: tnEl("tn_ppi").value === "1" };
+}
+function tnCurrent() {
+  return { kp_i: tnNum("tn_ckpi"), ki_i: tnNum("tn_ckii"), kp_w: tnNum("tn_ckpw"), ki_w: tnNum("tn_ckiw"),
+           kp_p: tnNum("tn_ckpp"), ki_p: tnNum("tn_ckip") };
+}
+function tnFast() {
+  const p = tnPlant(), s = tnSpec();
+  let g = TUNE.design(p, s);
+  tnEl("tn_tsw").value = (1.15 * g.info.ts_w_min).toFixed(2);
+  g = TUNE.design(p, tnSpec());
+  tnEl("tn_tsp").value = (1.15 * g.info.ts_p_min).toFixed(2);
+  tnRun();
+}
+
+function tnPlot(canvas, series, tMax) {
+  const dpr = window.devicePixelRatio || 1, W = canvas.clientWidth, H = canvas.height / (canvas._dpr || 1);
+  canvas._dpr = dpr; canvas.width = W * dpr; canvas.height = H * dpr;
+  const c = canvas.getContext("2d"); c.setTransform(dpr, 0, 0, dpr, 0, 0); c.clearRect(0, 0, W, H);
+  let lo = Infinity, hi = -Infinity;
+  series.forEach((s) => s.y.forEach((v, k) => { if (s.x[k] <= tMax && isFinite(v)) { lo = Math.min(lo, v); hi = Math.max(hi, v); } }));
+  if (!isFinite(lo)) return;
+  const pad = 0.08 * (hi - lo || 1); lo -= pad; hi += pad;
+  const L = 40, R = 6, T = 6, B = 18, x = (t) => L + (W - L - R) * t / tMax, y = (v) => T + (H - T - B) * (hi - v) / (hi - lo);
+  const css = getComputedStyle(document.documentElement);
+  c.strokeStyle = css.getPropertyValue("--line"); c.fillStyle = css.getPropertyValue("--muted"); c.font = "10px sans-serif"; c.lineWidth = 1;
+  for (let k = 0; k <= 4; k++) { const v = lo + (hi - lo) * k / 4; c.beginPath(); c.moveTo(L, y(v)); c.lineTo(W - R, y(v)); c.stroke(); c.fillText(v.toFixed(Math.abs(hi - lo) < 0.5 ? 3 : 2), 2, y(v) + 3); }
+  for (let k = 0; k <= 4; k++) { const t = tMax * k / 4; c.fillText(t < 0.1 ? (t * 1000).toFixed(0) + " ms" : t.toFixed(2) + " s", x(t) - 12, H - 4); }
+  series.forEach((s) => {
+    c.strokeStyle = css.getPropertyValue(s.color) || s.color; c.lineWidth = s.w || 1.6; c.setLineDash(s.dash || []); c.beginPath();
+    let first = true; s.x.forEach((t, k) => { if (t > tMax || !isFinite(s.y[k])) return; const X = x(t), Y = y(s.y[k]); if (first) { c.moveTo(X, Y); first = false; } else c.lineTo(X, Y); });
+    c.stroke(); c.setLineDash([]);
+  });
+}
+
+function tnRun() {
+  const p = tnPlant(), spec = tnSpec(), cur = tnCurrent();
+  if (Object.values(p).some((v) => !isFinite(v)) || Object.values(spec).some((v) => v === undefined || (typeof v === "number" && !(v >= 0)))) return;
+  if (!(p.a > 0 && p.J > 0 && p.b >= 0)) return;
+  const g = TUNE.design(p, spec), rd = TUNE.analyze(p, g);
+  const curOk = Object.values(cur).every((v) => isFinite(v) && v >= 0);
+  const rc = curOk ? TUNE.analyze(p, cur) : null;
+  tnLast = { g, p };
+  const sep = tnNum("tn_sep") || 4;
+  const f = (v, d = 2) => (isFinite(v) ? v.toFixed(d) : "—");
+  const cls = (okv, meh) => (okv ? "good" : meh ? "meh" : "bad");
+  const pmc = (pm) => cls(pm >= 45, pm >= 30);
+  const zc = (r) => cls(r < 0.98, r < 1);
+  const row = (name, fs, gd, md, zd, ga, ma, za, fsLim) => `<tr><td>${name}</td><td>${fs}</td>` +
+    `<td>${gd}</td><td class="${cls(md.fc <= fsLim, md.fc <= 2 * fsLim)}">${f(md.fc)}</td><td class="${pmc(md.pm)}">${f(md.pm, 0)}</td><td class="${zd === null ? "" : zc(zd)}">${zd === null ? "—" : f(zd, 3)}</td>` +
+    (rc ? `<td>${ga}</td><td class="${cls(ma.fc <= fsLim, ma.fc <= 2 * fsLim)}">${f(ma.fc)}</td><td class="${pmc(ma.pm)}">${f(ma.pm, 0)}</td><td class="${za === null ? "" : zc(za)}">${za === null ? "—" : f(za, 3)}</td>` : "<td colspan=4>—</td>") + `</tr>`;
+  tnEl("tnTable").innerHTML =
+    `<tr><th>Lazo</th><th>Muestreo</th><th>Diseño: Kp, Ki</th><th>f cruce (Hz)</th><th>MF (°)</th><th>|z| máx</th>` +
+    `<th>Actuales: Kp, Ki</th><th>f cruce (Hz)</th><th>MF (°)</th><th>|z| máx</th></tr>` +
+    row("Corriente", "1 kHz", `${f(g.kp_i, 2)}, ${f(g.ki_i, 0)}`, rd.mi, rd.dp.rI, rc && `${cur.kp_i}, ${cur.ki_i}`, rc && rc.mi, rc && rc.dp.rI, 100) +
+    row("Velocidad", "100 Hz", `${f(g.kp_w, 4)}, ${f(g.ki_w, 4)}`, rd.mw, rd.dp.rW, rc && `${cur.kp_w}, ${cur.ki_w}`, rc && rc.mw, rc && rc.dp.rW, 5) +
+    row("Posición", "50 Hz", `${f(g.kp_p, 3)}, ${f(g.ki_p, 3)}`, rd.mp, null, rc && `${cur.kp_p}, ${cur.ki_p}`, rc && rc.mp, null, 2.5);
+
+  // Verificación de la arquitectura en cascada
+  const chk = (okv, txt) => `<div>${okv ? "<span style='color:var(--ok)'>✔</span>" : "<span style='color:var(--err)'>✘</span>"} ${txt}</div>`;
+  const checks = (r, lab) => [
+    chk(r.sepIW >= sep, `${lab}: corriente ${f(r.mi.fc, 1)} Hz es ${f(r.sepIW, 1)}× más rápida que velocidad (pide ≥ ${sep}×)`),
+    chk(r.sepWP >= sep, `${lab}: velocidad ${f(r.mw.fc, 2)} Hz es ${f(r.sepWP, 1)}× más rápida que posición ${f(r.mp.fc, 2)} Hz (pide ≥ ${sep}×)`),
+    chk(r.mi.fc <= 100 && r.mw.fc <= 5 && r.mp.fc <= 2.5, `${lab}: cada lazo cruza por debajo de 1/10 de su muestreo (100 Hz, 5 Hz por la ventana de 20 ms, 2.5 Hz)`),
+    chk(r.mi.pm >= 45 && r.mw.pm >= 45 && r.mp.pm >= 45 && r.dp.rI < 1 && r.dp.rW < 1, `${lab}: estable con margen de fase ≥ 45° en los tres lazos`),
+  ].join("");
+  const info = g.info;
+  tnEl("tnChecks").innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:4px 16px">` +
+    `<div>${checks(rd, "Diseño")}</div>` + (rc ? `<div>${checks(rc, "Actuales")}</div>` : "") + `</div>` +
+    `<div class="cfg">Velocidad: ζ=${f(info.zeta_w)}, ωn=${f(info.wn_w, 1)} rad/s, retardo τ=${f(info.tau_w * 1000, 0)} ms, tercer polo ${f(-info.p3_w, 1)} rad/s · ` +
+    `ts mínimo alcanzable ≈ ${f(info.ts_w_min)} s · Posición: retardo equivalente del lazo de velocidad ${f(info.tau_p * 1000, 0)} ms, ts mínimo ≈ ${f(info.ts_p_min)} s.</div>`;
+  tnEl("tnWarn").innerHTML = g.warn.map((w) => "⚠ " + w).join("<br>");
+
+  // Simulaciones
+  const fric = tnNum("tn_fric") || 0, ilim = tnNum("tn_ilim") || 0.3, sw = tnNum("tn_sw") || 1, sp = tnNum("tn_sp") || 0.5;
+  const vmax = tnNum("tn_vmax") || 3, acc = tnNum("tn_acc") || 15;
+  const iStep = Math.min(0.8 * ilim, 0.15);
+  const simAll = (gg) => ({
+    i: TUNE.simulate(p, gg, { mode: "current", T: Math.max(0.06, 6 * spec.ts_i), tStep: 0.005, step: iStep, ilimit: ilim, theta0: p.G ? Math.PI / 2 - p.th0 : 0 }),
+    w: TUNE.simulate(p, gg, { mode: "speed", T: Math.max(1, 3 * spec.ts_w) + 0.1, tStep: 0.1, step: sw, ilimit: ilim, fric, gravFF: true, theta0: 0 }),
+    p: TUNE.simulate(p, gg, { mode: "position", T: Math.max(2.5, 2.5 * spec.ts_p + sp / vmax) + 0.2, tStep: 0.2, step: sp, ilimit: ilim, fric, gravFF: true, vmax, acc, tol: 0.01, theta0: 0 }),
+  });
+  const sd = simAll(g), sc = rc ? simAll(cur) : null;
+  const ser = (o, key, color, dash) => ({ x: o.t, y: o[key], color, dash });
+  const plots = [["tnPi", "i", "I", "Ir"], ["tnPw", "w", "wt", "wr"], ["tnPp", "p", "th", "thr"]];
+  for (const [cid, k, yk, rk] of plots) {
+    const sr = [ser(sd[k], rk, "--ref", [4, 3])];
+    if (sc) sr.push(ser(sc[k], yk, "--muted"));
+    sr.push(ser(sd[k], yk, "--ok"));
+    tnPlot(tnEl(cid), sr, sd[k].t[sd[k].t.length - 1]);
+  }
+  const md = TUNE.stepMetrics(sd.p.t, sd.p.th, sp, 0.2), mwd = TUNE.stepMetrics(sd.w.t, sd.w.wt, sw, 0.1);
+  tnEl("tnMetr").textContent = `Simulado (diseño): velocidad Mp ${f(mwd.mp, 0)} %, ts ${f(mwd.ts)} s · posición Mp ${f(md.mp, 1)} %, ts ${f(md.ts)} s`;
+
+  const m = `M${+tnEl("tnMotor").value + 1}`;
+  const cmds = [`${m},PID,${g.kp_i.toFixed(3)},${g.ki_i.toFixed(1)},0`, `${m},SPI,${g.kp_w.toFixed(5)},${g.ki_w.toFixed(5)}`, `${m},PPI,${g.kp_p.toFixed(3)},${g.ki_p.toFixed(3)}`];
+  if (tnEl("tnComp").checked) cmds.push(`${m},FRIC,${fric.toFixed(1)}`, `${m},GRAV,${p.G.toFixed(4)},${p.th0.toFixed(4)}`, `${m},ILIMIT,${ilim.toFixed(3)}`);
+  tnEl("tnCmd").textContent = cmds.join("\n");
+}
+
+tnEl("tnMotor").onchange = tnLoadIdent;
+tnEl("tnIdent").onclick = tnLoadIdent;
+tnEl("tnRead").onclick = tnReadCfg;
+tnEl("tnFast").onclick = tnFast;
+tnEl("tnComp").onchange = tnRun;
+document.querySelectorAll("#tuneCard input, #tuneCard select").forEach((e) => { if (e.id !== "tnMotor") e.addEventListener("change", tnRun); });
+tnEl("tnCopy").onclick = () => navigator.clipboard.writeText(tnEl("tnCmd").textContent).then(() => log("SINTONÍA: comandos copiados", "ack"));
+tnEl("tnSend").onclick = async () => {
+  if (!tnLast) return;
+  const i = +tnEl("tnMotor").value;
+  for (const c of tnEl("tnCmd").textContent.split("\n")) { await send(c); await new Promise((r) => setTimeout(r, 60)); }
+  // Que "Aplicar PI pos" e "Ir a posición" no vuelvan a poner los valores viejos.
+  tnEl("pkp" + i).value = tnLast.g.kp_p.toFixed(3); tnEl("pki" + i).value = tnLast.g.ki_p.toFixed(3);
+  if (tnEl("tnComp").checked) { tnEl("ilim" + i).value = tnNum("tn_ilim"); tnEl("fric" + i).value = tnNum("tn_fric");
+    tnEl("grav" + i).value = tnNum("tn_G"); tnEl("gofs" + i).value = tnNum("tn_th0"); }
+};
+window.addEventListener("resize", () => tnLast && tnRun());
+tnLoadIdent();
 </script>
 </body>
 </html>
