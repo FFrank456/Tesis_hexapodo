@@ -207,6 +207,13 @@ int main(void)
     CHECK(g_motors[2].control_mode == CONTROL_MODE_POSITION);
     spd_valid[1] = true;
 
+    /* PLIMIT / PPI are accepted live in POSITION without resetting the loop. */
+    { position_state_t st = g_motors[2].position.state; float out = g_motors[2].position.output_rad_s;
+      CHECK(strcmp(cmd("M3,PLIMIT,3,30,0.02"), "M3,ACK,PLIMIT,3.000000,30.000000,0.020000\n") == 0);
+      CHECK(g_motors[2].control_mode == CONTROL_MODE_POSITION && g_motors[2].position.max_speed_rad_s == 3);
+      CHECK(g_motors[2].position.state == st && g_motors[2].position.output_rad_s == out);
+      CHECK(strncmp(cmd("M3,PPI,6.166,3192"), "M3,ACK,PPI,", 11) == 0 && g_motors[2].control_mode == CONTROL_MODE_POSITION);
+      cmd("M3,PLIMIT,2,5,0.02"); }
     /* Position in POSITION mode refuses mode change without STOP. */
     CHECK(strcmp(cmd("M3,MODE,SPEED"), "M3,ERR,MODE,STOP_before_leaving_or_restarting_POSITION\n") == 0);
     step(4000);
@@ -231,7 +238,7 @@ int main(void)
 
     /* Friction and gravity feed-forward. */
     CHECK(strcmp(cmd("M1,FRIC,8"), "M1,ACK,FRIC,8.00\n") == 0 && g_motors[0].friction_pwm == 8);
-    CHECK(strcmp(cmd("M1,FRIC,50"), "M1,ERR,FRIC,expected_0_to_40_percent\n") == 0);
+    CHECK(strcmp(cmd("M1,FRIC,80"), "M1,ERR,FRIC,expected_0_to_70_percent\n") == 0);
     CHECK(strcmp(cmd("M1,GRAV,0.2,0.5"), "M1,ACK,GRAV,0.2000,0.5000\n") == 0);
     g_motors[0].speed.current_limit_a = 0.5f;
     { motor_direction_t d; float g;

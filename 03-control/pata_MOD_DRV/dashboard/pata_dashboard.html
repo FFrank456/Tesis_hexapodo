@@ -57,6 +57,9 @@ canvas { width: 100%; display: block; background: var(--panel2); border-radius: 
 .err { color: var(--err); } .ack { color: var(--ok); } .info { color: var(--muted); }
 .warnbox { background: #3b2a12; border: 1px solid #6b4a1f; color: #f5d9a8; padding: 10px 12px;
   border-radius: 8px; margin-bottom: 12px; display: none; }
+.atl { display: flex; flex-direction: column; font-size: 11px; color: var(--muted); gap: 2px; }
+.atc { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 4px; }
+#atStatus b { color: var(--accent); }
 .legend { display: flex; gap: 12px; font-size: 11px; color: var(--muted); margin: 4px 0; }
 .legend span:not(.x)::before { content: ""; display: inline-block; width: 14px; height: 2px; margin-right: 4px;
   vertical-align: middle; background: currentColor; }
@@ -85,6 +88,29 @@ canvas { width: 100%; display: block; background: var(--panel2); border-radius: 
 <main>
   <div class="warnbox" id="nosupport">Este navegador no tiene Web Serial. Abre este archivo en Chrome o Edge (escritorio).</div>
   <div class="grid" id="motors"></div>
+  <div class="card" id="autoCard" style="margin-top:12px">
+    <h2>Ensayo automático de identificación</h2>
+    <div class="cfg" style="margin:4px 0 8px">El dashboard hace los ensayos del README de <code>matlab/</code>, vigila el rango y la corriente,
+      y descarga un CSV por ensayo con el nombre que espera <code>identificar_pata.m</code>. Tú solo miras la pata
+      y la tienes a mano: <b>barra espaciadora = STOP TODO</b>.</div>
+    <div class="row" style="align-items:end">
+      <label class="atl">Articulación<select id="atMotor"><option value="0">M1 Coxa</option><option value="1" selected>M2 Fémur</option><option value="2">M3 Tibia</option></select></label>
+      <label class="atl">Rango mín (rad)<input type="number" step="0.05" value="-0.5" id="atMin"></label>
+      <label class="atl">Rango máx (rad)<input type="number" step="0.05" value="0.5" id="atMax"></label>
+      <label class="atl">Tibia (si es el fémur)<select id="atPost"><option value="estirada">estirada</option><option value="90">a 90°</option><option value="recogida">recogida</option></select></label>
+      <label class="atc"><input type="checkbox" id="atSentido" checked> 1. Sentido del encoder</label>
+      <label class="atc"><input type="checkbox" id="atRampa" checked> 2. Rampa (fricción estática)</label>
+      <label class="atc"><input type="checkbox" id="atVaiven" checked> 3. Vaivén (inercia, fricción, gravedad)</label>
+      <button class="primary" id="atStart">Iniciar ensayo</button>
+      <button class="stop" id="atAbort">Abortar</button>
+    </div>
+    <div class="cfg" id="atStatus" style="margin-top:8px;font-size:13px;color:var(--text)">Listo para empezar.</div>
+    <div class="cfg">Antes: cero del encoder con el eslabón <b>horizontal</b>. El rango es el que la articulación recorre sin tocar topes
+      ni cables. <b>Fémur y tibia:</b> los pasos 1 y 2 sueltan el motor (STOP), así que empieza con el eslabón <b>colgando quieto</b> y
+      pon un rango que <b>incluya esa posición colgando</b> (por ejemplo −1.4 … +0.5 rad si colgar es −1.57). Si no puedes, desmarca 1 y 2:
+      el vaivén también da la fricción. El vaivén recorre el rango entero (con 0.1 rad de margen) y termina sostenido en el centro.
+      Seguridad: si se sale del rango más de 0.08 rad, pasa de 0.65 A durante 0.3 s o salta nFAULT, el motor se detiene solo.</div>
+  </div>
   <div class="bottom">
     <div class="card">
       <h2>Mensajes del ESP32</h2>
@@ -161,7 +187,7 @@ MOTORS.forEach((m, i) => {
     <label>Ki pos<input type="number" step="10" min="0" value="0" id="pki${i}"></label>
     <button data-act="ppi" data-m="${i}" title="Ganancias del PI de posición (en STOP)">Aplicar PI pos</button>
     <label>Al llegar<select id="hold${i}"><option value="BRAKE">Freno</option><option value="COAST">Suelto</option></select></label>
-    <label>Fricción (% PWM)<input type="number" step="1" min="0" max="40" value="0" id="fric${i}"></label>
+    <label>Fricción (% PWM)<input type="number" step="1" min="0" max="70" value="0" id="fric${i}"></label>
     <label>Gravedad (A)<input type="number" step="0.02" min="-1" max="1" value="0" id="grav${i}"></label>
     <label>θ₀ gravedad (rad)<input type="number" step="0.1" value="0" id="gofs${i}"></label>
     <button data-act="comp" data-m="${i}" title="Retención, fricción y gravedad">Aplicar compensación</button>
@@ -240,7 +266,6 @@ const actions = {
   ppi: (i) => {
     const kp = num("pkp" + i), ki = num("pki" + i);
     if (!(kp >= 0) || !(ki >= 0)) return log("UI: ganancias inválidas", "err");
-    if (mode(i) === 3) return log(`UI: M${i + 1} en STOP antes de cambiar el PI de posición`, "err");
     send(P(i) + `PPI,${kp},${ki}`);
   },
   comp: (i) => {
@@ -260,7 +285,7 @@ const actions = {
     if (m !== 0 && m !== 3) return log(`UI: M${i + 1} en STOP antes de activar posición`, "err");
     send(P(i) + "LIMIT,0," + c.toFixed(1));
     send(P(i) + "ILIMIT," + a.toFixed(4));
-    if (m !== 3) send(P(i) + `PLIMIT,${mx},${ac},${tl}`);
+    send(P(i) + `PLIMIT,${mx},${ac},${tl}`);   // el firmware lo acepta también en Posición
     send(P(i) + "PREF," + r.toFixed(5));
     if (m !== 3) send(P(i) + "MODE,POSITION");
   },
@@ -333,6 +358,7 @@ function handleLine(line) {
   }
   const cls = /(^|,)ERR,/.test(line) ? "err" : /(^|,)ACK,/.test(line) ? "ack" : "info";
   log(line, cls);
+  atReply(line);
 }
 /* INFO,M1,COXA,IN1=26,IN2=27,CS=32,ADC1_CH4,ENC_A=35,ENC_B=25,NFAULT=5,ESIGN=1,...
    INFO,BOARD,pata_MOD_DRV,TEL,MULTI */
@@ -365,6 +391,7 @@ function handleT(line) {
     state[i].last = s;
   }
   samples.push(sample);
+  atWatch();
   const keep = 60 * 100 + 200;
   if (samples.length > keep) samples.splice(0, samples.length - keep);
   if (recording) {
@@ -511,7 +538,7 @@ requestAnimationFrame(render);
 
 /* ---------- Global buttons ---------- */
 document.getElementById("connect").onclick = connect;
-document.getElementById("stopAll").onclick = () => send("STOP");
+document.getElementById("stopAll").onclick = () => { send("STOP"); if (AT.running) AT.abort = "STOP TODO"; };
 document.getElementById("diag").onclick = () => send("DIAG");
 document.getElementById("zeroAll").onclick = () => {
   if (state.some((s, i) => mode(i) !== 0)) { log("UI: STOP TODO antes de poner cero", "err"); return; }
@@ -520,7 +547,9 @@ document.getElementById("zeroAll").onclick = () => {
 document.getElementById("send").onclick = () => { const r = document.getElementById("raw"); if (r.value.trim()) send(r.value.trim()); r.value = ""; };
 document.getElementById("raw").addEventListener("keydown", (e) => { if (e.key === "Enter") document.getElementById("send").click(); });
 document.addEventListener("keydown", (e) => {
-  if (e.key === " " && !["INPUT", "SELECT", "TEXTAREA"].includes(document.activeElement.tagName)) { e.preventDefault(); send("STOP"); }
+  if (e.key === " " && !["INPUT", "SELECT", "TEXTAREA"].includes(document.activeElement.tagName)) {
+    e.preventDefault(); send("STOP"); if (AT.running) AT.abort = "STOP TODO (barra espaciadora)";
+  }
 });
 document.getElementById("rec").onclick = (e) => {
   recording = !recording;
@@ -528,17 +557,241 @@ document.getElementById("rec").onclick = (e) => {
   if (recording) { record = []; recordHeader = null; document.getElementById("recinfo").textContent = "Grabando…"; }
   else document.getElementById("recinfo").textContent = `Registro listo: ${record.length} muestras.`;
 };
-document.getElementById("csv").onclick = () => {
-  if (!record.length) { log("UI: no hay registro; pulsa Grabar primero", "err"); return; }
+function exportRecord(filename) {
   const header = recordHeader || defaultHeader();
   const body = record.map(r => r.join(",")).join("\n");
   const blob = new Blob([header.join(",") + "\n" + body + "\n"], { type: "text/csv" });
   const a = document.createElement("a");
-  const d = new Date(), z = (n) => String(n).padStart(2, "0");
-  a.download = `${(document.title || "pata").replace(/\s+/g, "_")}_${d.getFullYear()}${z(d.getMonth() + 1)}${z(d.getDate())}_${z(d.getHours())}${z(d.getMinutes())}${z(d.getSeconds())}.csv`;
+  a.download = filename;
   a.href = URL.createObjectURL(blob); a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+document.getElementById("csv").onclick = () => {
+  if (!record.length) { log("UI: no hay registro; pulsa Grabar primero", "err"); return; }
+  const d = new Date(), z = (n) => String(n).padStart(2, "0");
+  exportRecord(`${(document.title || "pata").replace(/\s+/g, "_")}_${d.getFullYear()}${z(d.getMonth() + 1)}${z(d.getDate())}_${z(d.getHours())}${z(d.getMinutes())}${z(d.getSeconds())}.csv`);
 };
+
+/* ---------- Ensayo automático ---------- */
+const AT = { running: false, abort: null, motor: 1, min: 0, max: 0, waiters: [], highCur: 0, emergency: false };
+const AT_PREFIX = ["coxa", "femur", "tibia"];
+const atStatus = (html) => { document.getElementById("atStatus").innerHTML = html; };
+class AtAbort extends Error {}
+
+function atReply(line) {
+  for (const w of AT.waiters.slice()) {
+    if (line.startsWith(w.ack) || line.startsWith(w.err)) {
+      AT.waiters.splice(AT.waiters.indexOf(w), 1);
+      w.resolve(line);
+    }
+  }
+}
+/* Safety watchdog, every T sample (100 Hz). */
+function atWatch() {
+  if (!AT.running) return;
+  const s = state[AT.motor].last;
+  if (!s) return;
+  const margin = 0.08;
+  if (isFinite(s.pos) && (s.pos < AT.min - margin || s.pos > AT.max + margin)) {
+    atEmergency(`fuera de rango (${s.pos.toFixed(3)} rad, rango ${AT.min}…${AT.max})`);
+  }
+  AT.highCur = isFinite(s.cur) && s.cur > 0.65 ? AT.highCur + 1 : 0;
+  if (AT.highCur > 30) atEmergency(`corriente alta (${s.cur.toFixed(3)} A durante 0.3 s)`);
+  if (s.flags & 8) atEmergency("nFAULT del driver");
+}
+function atEmergency(reason) {
+  if (AT.emergency) return;
+  AT.emergency = true;
+  AT.abort = reason;
+  send(`M${AT.motor + 1},STOP`);
+  log("ENSAYO: parada de seguridad: " + reason, "err");
+}
+function atCheck() { if (AT.abort) throw new AtAbort(AT.abort); }
+async function atSleep(ms) {
+  const t0 = performance.now();
+  while (performance.now() - t0 < ms) { atCheck(); await new Promise(r => setTimeout(r, 20)); }
+  atCheck();
+}
+async function atUntil(pred, timeoutMs) {
+  const t0 = performance.now();
+  while (performance.now() - t0 < timeoutMs) { atCheck(); if (pred()) return true; await new Promise(r => setTimeout(r, 20)); }
+  return false;
+}
+/* Send a motor command and wait for its ACK/ERR (1.5 s). Returns the reply line. */
+async function atCmd(body) {
+  atCheck();
+  const p = `M${AT.motor + 1},`;
+  const name = body.split(",")[0];
+  const reply = new Promise((resolve) => {
+    const w = { ack: p + "ACK," + name, err: p + "ERR,", resolve };
+    AT.waiters.push(w);
+    setTimeout(() => { const k = AT.waiters.indexOf(w); if (k >= 0) { AT.waiters.splice(k, 1); resolve(null); } }, 1500);
+  });
+  await send(p + body);
+  const line = await reply;
+  if (!line) throw new AtAbort(`el ESP32 no respondió a ${p + body}`);
+  return line;
+}
+const atS = () => state[AT.motor].last;
+/* Wait until the axis is still (|w| < 0.15 rad/s) for `ms`. */
+async function atStill(ms, timeoutMs) {
+  let since = null;
+  const ok = await atUntil(() => {
+    const s = atS();
+    const still = s && isFinite(s.spd) && Math.abs(s.spd) < 0.15;
+    if (!still) { since = null; return false; }
+    if (since === null) since = performance.now();
+    return performance.now() - since >= ms;
+  }, timeoutMs);
+  return ok;
+}
+function atStartRec() { recording = true; record = []; recordHeader = null; }
+function atStopRec(name) {
+  recording = false;
+  if (record.length > 50) { exportRecord(name); log(`ENSAYO: descargado ${name} (${record.length} muestras)`, "ack"); }
+}
+
+async function atSentido() {
+  atStatus("<b>1/3 Sentido del encoder</b>: pulsos cortos de PWM positivo…");
+  await atCmd("STOP");
+  if (!await atStill(500, 6000)) throw new AtAbort("la articulación no se queda quieta al soltarla (llévala a colgar o sujétala con la mano cerca de su apoyo)");
+  let maxCur = 0;
+  for (const u of [15, 25, 40, 60, 80]) {
+    const p0 = atS().pos;
+    await atCmd(`SET,${u}`);
+    let peak = 0;
+    await atUntil(() => { const s = atS(); peak = Math.max(peak, isFinite(s.cur) ? s.cur : 0); return Math.abs(s.pos - p0) > 0.03; }, 600);
+    await atCmd("STOP");
+    maxCur = Math.max(maxCur, peak);
+    log(`ENSAYO: pulso ${u} % → corriente máx ${peak.toFixed(3)} A, movimiento ${(atS().pos - p0).toFixed(3)} rad`, "info");
+    await atStill(300, 3000);
+    const d = atS().pos - p0;
+    if (Math.abs(d) < 0.01) continue;
+    if (d > 0) { log(`ENSAYO: sentido correcto (PWM + → posición +${d.toFixed(3)} rad)`, "ack"); return true; }
+    const sign = state[AT.motor].cfg ? state[AT.motor].cfg.esign : 1;
+    await atCmd(`ESIGN,${-sign}`);
+    throw new AtAbort("el encoder estaba invertido y ya lo corregí (ESIGN). Vuelve a poner el CERO con el eslabón " +
+                      "horizontal y repite el ensayo sin el paso 1.");
+  }
+  if (maxCur < 0.02)
+    throw new AtAbort(`con 80 % de PWM la corriente fue ${maxCur.toFixed(3)} A: el driver no está entregando corriente a este motor. ` +
+                      "Revisa que el motor esté en el conector correcto (M1 = J3A, M2 = J3B, M3 = J3C) y el orden de pines del cable " +
+                      "(pines 1-2 = motor). ¿Se movió el eje aunque sea un poco?");
+  throw new AtAbort(`con 80 % de PWM hubo ${maxCur.toFixed(3)} A pero el encoder no registró movimiento. Si el eje SÍ se movió, ` +
+                    "el encoder no cuenta (cable del encoder, 3V3, y en la coxa el pull-up de IO35). Si NO se movió, está trabado o el " +
+                    "motor/reductora no gira.");
+}
+
+const AT_RAMP_MAX = 90;
+async function atRampa() {
+  const name = `${AT_PREFIX[AT.motor]}_rampa.csv`;
+  atStartRec();
+  try {
+    for (const dir of [1, -1]) {
+      for (let rep = 1; rep <= 2; rep++) {
+        atStatus(`<b>2/3 Rampa</b> sentido ${dir > 0 ? "+" : "−"}, repetición ${rep}/2`);
+        await atCmd("STOP");
+        if (!await atStill(600, 6000)) throw new AtAbort("la articulación no se queda quieta al soltarla: para la rampa debe quedar colgando");
+        const p0 = atS().pos;
+        if ((dir > 0 && p0 > AT.max - 0.15) || (dir < 0 && p0 < AT.min + 0.15)) {
+          log(`ENSAYO: sin espacio para la rampa en sentido ${dir > 0 ? "+" : "−"} (posición ${p0.toFixed(2)} rad)`, "err");
+          continue;
+        }
+        let arranque = null;
+        for (let u = 2; u <= AT_RAMP_MAX && arranque === null; u += (u < 30 ? 2 : 4)) {
+          await atCmd(`SET,${dir * u}`);
+          const moved = await atUntil(() => { const s = atS(); return Math.abs(s.spd) > 0.5 || Math.abs(s.pos - p0) > 0.1; }, 400);
+          if (moved) arranque = u;
+        }
+        await atCmd("STOP");
+        log(arranque ? `ENSAYO: arrancó con ${arranque} % (sentido ${dir > 0 ? "+" : "−"})` : `ENSAYO: no arrancó con ${AT_RAMP_MAX} %`, arranque ? "ack" : "err");
+        await atStill(500, 6000);
+        await atSleep(300);
+      }
+    }
+  } finally { atStopRec(name); }
+}
+
+async function atGoTo(target, vmax) {
+  await atCmd(`PREF,${target.toFixed(4)}`);
+  const timeout = 4000 + 2000 * Math.abs(target - atS().pos) / Math.max(vmax, 0.2);
+  const ok = await atUntil(() => { const s = atS(); return Math.abs(s.pos - target) < 0.04 && Math.abs(s.spd) < 0.3; }, timeout);
+  if (!ok) log(`ENSAYO: no llegó a ${target.toFixed(2)} rad en ${(timeout / 1000).toFixed(1)} s (sigo)`, "err");
+  await atSleep(250);
+}
+async function atVaiven() {
+  const post = document.getElementById("atPost").value;
+  const name = AT.motor === 1 ? `femur_tibia_${post}.csv` : `${AT_PREFIX[AT.motor]}_vaiven.csv`;
+  const lo = AT.min + 0.1, hi = AT.max - 0.1;
+  atStatus("<b>3/3 Vaivén</b>: activando posición…");
+  if (atS().mode !== 3) {
+    let activo = false;
+    for (let k = 0; k < 3 && !activo; k++) {
+      await atStill(400, 6000);
+      await atCmd(`PLIMIT,1,5,0.0023`);
+      await atCmd(`PREF,${atS().pos.toFixed(4)}`);
+      const r = await atCmd("MODE,POSITION");
+      activo = r.includes("ACK");
+    }
+    if (!activo) throw new AtAbort("no pude activar el modo Posición");
+  }
+  atStartRec();
+  try {
+    for (const [vmax, acc] of [[0.5, 3], [1, 8], [2, 15]]) {
+      // Tolerancia mínima: el lazo sigue corrigiendo (TRACK) en vez de pasar a HOLD,
+      // así un eslabón con peso no se desliza mientras se ensaya.
+      await atCmd(`PLIMIT,${vmax},${acc},0.0023`);
+      for (let c = 1; c <= 2; c++) {
+        atStatus(`<b>3/3 Vaivén</b> vmax ${vmax} rad/s, acel ${acc} rad/s², ciclo ${c}/2`);
+        await atGoTo(hi, vmax);
+        await atGoTo(lo, vmax);
+      }
+    }
+    await atCmd("PLIMIT,1,5,0.0023");
+    await atGoTo((lo + hi) / 2, 1);
+  } finally { atStopRec(name); }
+}
+
+async function atRun() {
+  if (AT.running) return;
+  if (!connected) { atStatus("Conecta primero el ESP32."); return; }
+  AT.motor = +document.getElementById("atMotor").value;
+  AT.min = num("atMin"); AT.max = num("atMax");
+  if (!(AT.max - AT.min >= 0.4)) { atStatus("El rango debe ser de al menos 0.4 rad (mín < máx)."); return; }
+  const s = atS();
+  if (!s) { atStatus("Sin datos del ESP32 todavía."); return; }
+  if (s.pos < AT.min || s.pos > AT.max) { atStatus(`La articulación está en ${s.pos.toFixed(2)} rad, fuera del rango: llévala dentro antes de empezar.`); return; }
+  AT.running = true; AT.abort = null; AT.emergency = false; AT.highCur = 0;
+  document.getElementById("atStart").disabled = true;
+  const nombre = MOTORS[AT.motor].name;
+  log(`ENSAYO: inicio en M${AT.motor + 1} ${nombre}, rango ${AT.min}…${AT.max} rad`, "info");
+  try {
+    // Gravedad y Fricción se dejan como estén: la identificación usa la corriente
+    // medida, así que no la sesgan, y la gravedad evita que el eslabón se caiga.
+    await atCmd("LIMIT,0,100");
+    await atCmd("ILIMIT,0.5");
+    if (document.getElementById("atSentido").checked) await atSentido();
+    if (document.getElementById("atRampa").checked) await atRampa();
+    if (document.getElementById("atVaiven").checked) await atVaiven();
+    atStatus(`<b>Ensayo de ${nombre} terminado.</b> La articulación queda sostenida en el centro del rango. ` +
+             "Los CSV están en tu carpeta de Descargas: muévelos a <code>pata_MOD_DRV/matlab/datos/</code>.");
+    log("ENSAYO: terminado", "ack");
+  } catch (e) {
+    const why = e instanceof AtAbort ? e.message : (e && e.message) || String(e);
+    atStatus(`<span style="color:var(--err)">Ensayo detenido: ${why}</span>`);
+    log("ENSAYO: detenido: " + why, "err");
+    recording = false;
+    // Hold if still in position (a weighted link must not be released), else make sure it is stopped.
+    const last = atS();
+    if (!AT.emergency && last && last.mode === 3) send(`M${AT.motor + 1},PREF,${last.pos.toFixed(4)}`);
+    else if (!AT.emergency) send(`M${AT.motor + 1},STOP`);
+  } finally {
+    AT.running = false;
+    document.getElementById("atStart").disabled = false;
+  }
+}
+document.getElementById("atStart").onclick = atRun;
+document.getElementById("atAbort").onclick = () => { if (AT.running) AT.abort = "abortado por el usuario"; };
 </script>
 </body>
 </html>

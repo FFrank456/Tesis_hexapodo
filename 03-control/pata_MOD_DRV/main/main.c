@@ -988,8 +988,8 @@ static void handle_motor_command(motor_t *m, char *command)
     /* FRIC,pct: PWM added to the cascade output to overcome static friction. */
     if (strcmp(command, "FRIC") == 0) {
         float pct; char *value = strtok(NULL, ",");
-        if (!control_parse_float(value, &pct) || pct < 0 || pct > 40 || strtok(NULL, ",")) {
-            reply("ERR,FRIC,expected_0_to_40_percent\n"); return;
+        if (!control_parse_float(value, &pct) || pct < 0 || pct > 70 || strtok(NULL, ",")) {
+            reply("ERR,FRIC,expected_0_to_70_percent\n"); return;
         }
         portENTER_CRITICAL(&g_state_lock);
         m->friction_pwm = pct;
@@ -1166,8 +1166,10 @@ static void handle_motor_command(motor_t *m, char *command)
         if(m->control_mode==CONTROL_MODE_POSITION && m->gravity_a==0.0f)motor_set_output(m, MOTOR_STOP,0);
         reply("ACK,PREF,%.6f\n",ref);return;
     }
+    /* PPI / PLIMIT are accepted while POSITION is active (bumpless: the
+     * integrator, ramp and state are kept), so a weighted link never has to be
+     * released (STOP = coast) to change its limits or gains. */
     if(strcmp(command,"PPI")==0 || strcmp(command,"PLIMIT")==0) {
-        if(m->control_mode==CONTROL_MODE_POSITION) {reply("ERR,POSITION,STOP_before_parameter_change\n");return;}
         bool gains=strcmp(command,"PPI")==0;
         float a,b,c=0;char *ta=strtok(NULL,","),*tb=strtok(NULL,","),*tc=gains ? NULL : strtok(NULL,",");
         bool ok=control_parse_float(ta,&a) && control_parse_float(tb,&b);
@@ -1179,7 +1181,7 @@ static void handle_motor_command(motor_t *m, char *command)
         portENTER_CRITICAL(&g_state_lock);
         if(gains){m->position.kp=a;m->position.ki=b;}
         else {m->position.max_speed_rad_s=a;m->position.accel_rad_s2=b;m->position.tolerance_rad=c;}
-        position_pi_reset(&m->position);
+        if(m->control_mode!=CONTROL_MODE_POSITION)position_pi_reset(&m->position);
         portEXIT_CRITICAL(&g_state_lock);
         reply("ACK,%s,%.6f,%.6f,%.6f\n",command,a,b,c);return;
     }
