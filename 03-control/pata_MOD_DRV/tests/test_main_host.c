@@ -334,12 +334,31 @@ int main(void)
     CHECK(strstr(cmd("M1,FRICI,0.1"), "ERR,FRICI") != NULL);
     { motor_t *m = &g_motors[0]; encoder_sample_t e = { .speed_valid = true, .output_speed_rad_s = 0 };
       m->control_direction = MOTOR_CW; m->speed.reference_rad_s = 1.0f; m->friction_stuck_since_us = 0;
-      CHECK(fabsf(friction_feedforward(m, &e, 1000000) - 0.03f) < 1e-6f && m->friction_breakaway);      /* stuck: starts at Ic */
-      CHECK(fabsf(friction_feedforward(m, &e, 1000000 + 75000) - 0.08f) < 1e-4f);                         /* half ramp */
-      CHECK(fabsf(friction_feedforward(m, &e, 1000000 + 150000) - 0.13f) < 1e-4f);                        /* Is at the ramp time */
-      { float lim = m->speed.current_limit_a, cap = fminf(0.26f, lim);
-        CHECK(fabsf(friction_feedforward(m, &e, 1000000 + 2000000) - cap) < 1e-4f); }                     /* keeps rising, capped */
-      e.output_speed_rad_s = 0.5f;
+      float cap = fminf(0.26f, m->speed.current_limit_a);
+      /* Default FRICB 1,200: straight to Is, then up to 2*Is in 200 ms. */
+      CHECK(fabsf(friction_feedforward(m, &e, 1000000) - 0.13f) < 1e-5f && m->friction_breakaway);      /* stuck: starts at Is */
+      CHECK(fabsf(friction_feedforward(m, &e, 1000000 + 100000) - (0.13f + (cap - 0.13f) / 2)) < 1e-4f); /* half ramp */
+      CHECK(fabsf(friction_feedforward(m, &e, 1000000 + 2000000) - cap) < 1e-4f);                       /* capped */
+      /* Close to the target (slow speed reference) it starts from Ic. */
+      m->speed.reference_rad_s = 0.1f; m->friction_stuck_since_us = 0;
+      CHECK(fabsf(friction_feedforward(m, &e, 4000000) - 0.03f) < 1e-5f);
+      m->speed.reference_rad_s = 1.0f; m->friction_stuck_since_us = 0;
+      /* FRICB,0,150: old behaviour, from Ic. */
+      CHECK(strcmp(cmd("M1,FRICB,0,150"), "M1,ACK,FRICB,0.00,150\n") == 0);
+      CHECK(fabsf(friction_feedforward(m, &e, 5000000) - 0.03f) < 1e-5f);
+      CHECK(fabsf(friction_feedforward(m, &e, 5000000 + 75000) - (0.03f + (cap - 0.03f) / 2)) < 1e-4f);
+      CHECK(strstr(cmd("M1,FRICB,1.5,100"), "ERR,FRICB") != NULL && strstr(cmd("M1,FRICB,1,5"), "ERR,FRICB") != NULL);
+      cmd("M1,FRICB,1,200");
+      /* Encoder jitter while stuck (2 counts: 0.22 rad/s but only 0.0045 rad of
+       * travel) must not restart the push ramp, either way. */
+      e.output_speed_rad_s = 0.22f; e.output_position_rad = 0.0045;
+      float fj = friction_feedforward(m, &e, 5000000 + 150000);
+      CHECK(fj > 0.13f && m->friction_breakaway && m->friction_stuck_since_us == 5000000);
+      e.output_speed_rad_s = -0.22f; e.output_position_rad = -0.0045;
+      fj = friction_feedforward(m, &e, 5000000 + 160000);
+      CHECK(fj > 0.13f && m->friction_breakaway && m->friction_stuck_since_us == 5000000);
+      /* Real motion (0.02 rad past where it stuck): loose, back to Ic. */
+      e.output_speed_rad_s = 0.5f; e.output_position_rad = 0.02;
       CHECK(fabsf(friction_feedforward(m, &e, 1500000) - 0.03f) < 1e-6f && !m->friction_breakaway);      /* moving: Ic */
       e.output_speed_rad_s = -0.5f;
       CHECK(friction_feedforward(m, &e, 1600000) == 0.0f);                                                /* moving backwards */
@@ -395,6 +414,30 @@ int main(void)
       CHECK(fabsf(friction_feedforward(m, &e, 2000) - 0.03f) < 1e-6f);     /* no map for -: Ic */
       m->control_direction = MOTOR_CW; m->speed.reference_rad_s = 0; }
     CHECK(strcmp(cmd("M1,FMAP,CLEAR"), "M1,ACK,FMAP,CLEAR\n") == 0 && !g_motors[0].fmap[0].valid);
+
+    /* DITHER: PWM square wave while motion is asked for. */
+    CHECK(strcmp(cmd("M1,DITHER,10,100"), "M1,ACK,DITHER,10.0,100\n") == 0);
+    CHECK(strstr(cmd("M1,DITHER,40,100"), "ERR,DITHER") != NULL && strstr(cmd("M1,DITHER,10,5"), "ERR,DITHER") != NULL);
+    g_motors[0].speed.reference_rad_s = 1.0f;
+    CHECK(dither_term(&g_motors[0], 0) == 10.0f && dither_term(&g_motors[0], 5000) == -10.0f && dither_term(&g_motors[0], 10000) == 10.0f);
+    g_motors[0].speed.reference_rad_s = 0;
+    CHECK(dither_term(&g_motors[0], 5000) == 0.0f);
+    cmd("M1,DITHER,0,80");
+
+    /* Dither on a sticky axis (40 % PWM to move, no FRICI): the PWM peaks break
+     * the static friction long before the speed integrator alone does. */
+    double t_dith[2];
+    for (int run = 0; run < 2; ++run) {
+        cmd("M1,STOP"); spd[0] = 0; step(300); stick_pwm[0] = 40;
+        cmd("M1,ENCODER,ZERO"); cmd("M1,FRICI,0,0"); cmd("M1,GRAV,0,0"); cmd(run ? "M1,DITHER,15,100" : "M1,DITHER,0,100");
+        cmd("M1,ILIMIT,0.4"); cmd("M1,LIMIT,0,100"); cmd("M1,SPI,0.0284,0.01392"); cmd("M1,PPI,2,0"); cmd("M1,PLIMIT,1,10,0.01");
+        cmd("M1,PREF,0.3"); CHECK(strncmp(cmd("M1,MODE,POSITION"), "M1,ACK,MODE,POSITION", 20) == 0);
+        t_dith[run] = -1;
+        for (int k = 0; k < 15000; ++k) { step(1); if (t_dith[run] < 0 && fabs(pos[0] - ref_pos[0] - 0.3) < 0.03) t_dith[run] = k / 1000.0; }
+        fprintf(stderr, "  eje pegajoso, %s: llega en %.2f s\n", run ? "con DITHER 15 % 100 Hz" : "sin dither", t_dith[run]);
+    }
+    CHECK(t_dith[1] > 0 && (t_dith[0] < 0 || t_dith[1] < 0.7 * t_dith[0]));
+    cmd("STOP"); stick_pwm[0] = 0; cmd("M1,DITHER,0,80");
 
     /* GRAV2: second gravity term coupled to another joint (tibia on the femur). */
     CHECK(strcmp(cmd("M3,GRAV2,0.05,0.1,2,1"), "M3,ACK,GRAV2,0.0500,0.1000,2,1.00\n") == 0);

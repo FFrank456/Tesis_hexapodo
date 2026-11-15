@@ -77,9 +77,32 @@
 #ifndef FRIC_MOVING_RAD_S
 #define FRIC_MOVING_RAD_S                   0.15f
 #endif
-#ifndef FRIC_BREAKAWAY_RAMP_US
-#define FRIC_BREAKAWAY_RAMP_US              150000LL
+/* Once stuck, the joint only counts as loose (push back to Ic) or as moving
+ * backwards (push to 0) after it has also travelled this far from where it got
+ * stuck. The speed alone is not enough: one encoder count in the 20 ms window
+ * is 0.11 rad/s, so 2 counts of vibration (dither, PLA bushings) read 0.22 rad/s
+ * and used to restart the push ramp before it could reach 2*Is. 0.01 rad is
+ * ~4.5 counts, above that jitter. */
+#ifndef FRIC_LOOSE_RAD
+#define FRIC_LOOSE_RAD                      0.01f
 #endif
+/* Breakaway push (FRICB,start,ramp_ms): while stuck it starts at
+ * Ic + start*(Is - Ic) and rises to FRIC_BREAKAWAY_MAX_FACTOR*Is in ramp_ms.
+ * Default: straight to Is, 2*Is after 200 ms. Close to the target (speed
+ * reference below FRIC_FAST_WREF_RAD_S) it always starts from Ic so the push
+ * does not throw the joint past a small error. */
+#ifndef FRIC_BREAKAWAY_RAMP_US
+#define FRIC_BREAKAWAY_RAMP_US              200000LL
+#endif
+#ifndef FRIC_FAST_WREF_RAD_S
+#define FRIC_FAST_WREF_RAD_S                0.2f
+#endif
+/* PWM dither (DITHER,pct,hz): square wave of +-pct % added to the PWM while
+ * the cascade asks for motion. Above the current loop's bandwidth (~37 Hz)
+ * it is not cancelled; it keeps the PLA bushings "unstuck". */
+#define DITHER_MAX_PCT                      30.0f
+#define DITHER_MIN_HZ                       20.0f
+#define DITHER_MAX_HZ                       250.0f
 #define FRIC_MAX_A                          0.5f
 /* Position-dependent friction map (FMAP): per motion direction, Coulomb
  * current per angle bin, linearly interpolated (PLA bushings: friction varies
@@ -198,6 +221,7 @@ typedef struct {
     int fmap_bins[2];
     float gravity2_a, gravity2_offset_rad, gravity2_coupling;
     int gravity2_motor;
+    float fricb_start, fricb_ramp_ms, dither_pct, dither_hz;
     float gravity_a;
     float gravity_offset_rad;
 } telemetry_t;
@@ -241,6 +265,10 @@ typedef struct {
     float friction_term_a;    /* feed-forward applied in the last step (telemetry) */
     bool friction_breakaway;  /* joint stuck: breakaway push active (telemetry) */
     int64_t friction_stuck_since_us;
+    double friction_stuck_pos_rad; /* output position when it got stuck */
+    float fricb_start;       /* 0 = start at Ic, 1 = start at Is (FRICB) */
+    int64_t fricb_ramp_us;
+    float dither_pct, dither_hz;
     fric_map_t fmap[2];       /* [0] motion +, [1] motion - */
     uint8_t current_invalid_streak; /* consecutive unusable CS blocks ridden through */
     uint32_t current_ride_through_total;
@@ -680,24 +708,45 @@ static float friction_feedforward(motor_t *m, const encoder_sample_t *encoder, i
         m->friction_stuck_since_us = 0; m->friction_breakaway = false;
         return 0.0f;
     }
-    float projected = (m->control_direction == MOTOR_CCW ? -1.0f : 1.0f) * (float)encoder->output_speed_rad_s;
-    if (projected > FRIC_MOVING_RAD_S) {          /* moving the commanded way */
+    float dir = m->control_direction == MOTOR_CCW ? -1.0f : 1.0f;
+    float projected = dir * (float)encoder->output_speed_rad_s;
+    bool pos_ok = isfinite(encoder->output_position_rad);
+    /* Travel since it got stuck (commanded sense). Not stuck yet, or no
+     * position: the speed decides alone, as before. */
+    float moved = (m->friction_stuck_since_us && pos_ok)
+                  ? dir * (float)(encoder->output_position_rad - m->friction_stuck_pos_rad)
+                  : (projected > 0.0f ? FRIC_LOOSE_RAD : -FRIC_LOOSE_RAD);
+    if (projected > FRIC_MOVING_RAD_S && moved >= FRIC_LOOSE_RAD) {    /* moving the commanded way */
         m->friction_stuck_since_us = 0; m->friction_breakaway = false;
         return ic;
     }
-    if (projected < -FRIC_MOVING_RAD_S) {         /* still moving the other way */
+    if (projected < -FRIC_MOVING_RAD_S && moved <= -FRIC_LOOSE_RAD) {  /* still moving the other way */
         m->friction_stuck_since_us = 0; m->friction_breakaway = false;
         return 0.0f;
     }
-    if (!m->friction_stuck_since_us) m->friction_stuck_since_us = now_us;
+    if (!m->friction_stuck_since_us) {
+        m->friction_stuck_since_us = now_us;
+        m->friction_stuck_pos_rad = pos_ok ? encoder->output_position_rad : 0.0;
+    }
     m->friction_breakaway = true;
-    /* Ic -> Is in FRIC_BREAKAWAY_RAMP_US and on at the same rate up to
-     * FRIC_BREAKAWAY_MAX_FACTOR*Is (static friction varies along the travel).
-     * The speed integrator is frozen meanwhile, so nothing is left wound up
-     * when the joint breaks loose and the push drops back to Ic. */
-    float ramp = (float)(now_us - m->friction_stuck_since_us) / (float)FRIC_BREAKAWAY_RAMP_US;
-    float cap = fminf(FRIC_BREAKAWAY_MAX_FACTOR * is, m->speed.current_limit_a);
-    return fminf(ic + (is - ic) * fmaxf(ramp, 0.0f), fmaxf(cap, ic));
+    /* Breakaway push: from start to FRIC_BREAKAWAY_MAX_FACTOR*Is in fricb_ramp_us
+     * (static friction varies along the travel). The speed integrator is frozen
+     * meanwhile, so nothing is left wound up when the joint breaks loose and
+     * the push drops back to Ic. */
+    float sf = fabsf(m->speed.reference_rad_s) >= FRIC_FAST_WREF_RAD_S ? m->fricb_start : 0.0f;
+    float start = ic + (is - ic) * sf;
+    float cap = fmaxf(fminf(FRIC_BREAKAWAY_MAX_FACTOR * is, m->speed.current_limit_a), ic);
+    float ramp = (float)(now_us - m->friction_stuck_since_us) / (float)(m->fricb_ramp_us > 0 ? m->fricb_ramp_us : 1);
+    return fminf(start + (cap - start) * clamp_float(ramp, 0.0f, 1.0f), cap);
+}
+
+/* PWM dither term (signed, %) for this instant. */
+static float dither_term(const motor_t *m, int64_t now_us)
+{
+    if (m->dither_pct <= 0.0f || m->dither_hz <= 0.0f || m->speed.reference_rad_s == 0) return 0.0f;
+    int64_t half = (int64_t)(500000.0f / m->dither_hz);
+    if (half <= 0) return 0.0f;
+    return ((now_us / half) & 1) ? -m->dither_pct : m->dither_pct;
 }
 
 static bool has_gravity(const motor_t *m)
@@ -889,6 +938,8 @@ static void motor_control_step(motor_t *m, int64_t now_us, const control_rates_t
                 if (cascade && m->drive_direction == m->control_direction && m->speed_current_a > 0 &&
                     m->friction_pwm > 0)
                     pid_output_percent = fminf(m->pid.output_max_percent, pid_output_percent + m->friction_pwm);
+                if (cascade)
+                    pid_output_percent = clamp_float(pid_output_percent + dither_term(m, now_us), 0.0f, m->pid.output_max_percent);
                 pid_direction = m->drive_direction;
                 apply_pid_output = true;
             } else if (cascade && !valid && m->pid.last_sample_us &&
@@ -928,6 +979,8 @@ static void motor_control_step(motor_t *m, int64_t now_us, const control_rates_t
     t->friction_breakaway = m->friction_breakaway;
     t->gravity2_a = m->gravity2_a; t->gravity2_offset_rad = m->gravity2_offset_rad;
     t->gravity2_coupling = m->gravity2_coupling; t->gravity2_motor = m->gravity2_motor;
+    t->fricb_start = m->fricb_start; t->fricb_ramp_ms = (float)m->fricb_ramp_us / 1000.0f;
+    t->dither_pct = m->dither_pct; t->dither_hz = m->dither_hz;
     t->fmap_bins[0] = m->fmap[0].valid ? m->fmap[0].n : 0;
     t->fmap_bins[1] = m->fmap[1].valid ? m->fmap[1].n : 0;
     t->gravity_a = m->gravity_a;
@@ -1185,6 +1238,34 @@ static void handle_motor_command(motor_t *m, char *command)
         m->fmap[idx] = f;
         portEXIT_CRITICAL(&g_state_lock);
         reply("ACK,FMAP,%s,%d,%.3f,%.3f\n", idx ? "-" : "+", f.n, f.start_rad, f.step_rad);
+        return;
+    }
+
+    /* FRICB,start(0..1),ramp_ms(20..2000): breakaway push while stuck. */
+    if (strcmp(command, "FRICB") == 0) {
+        float sf, ms; char *a = strtok(NULL, ","), *b = strtok(NULL, ",");
+        if (!control_parse_float(a, &sf) || !control_parse_float(b, &ms) || strtok(NULL, ",") ||
+            sf < 0 || sf > 1 || ms < 20 || ms > 2000) {
+            reply("ERR,FRICB,expected_start_0to1,ramp_ms_20to2000\n"); return;
+        }
+        portENTER_CRITICAL(&g_state_lock);
+        m->fricb_start = sf; m->fricb_ramp_us = (int64_t)(ms * 1000.0f);
+        portEXIT_CRITICAL(&g_state_lock);
+        reply("ACK,FRICB,%.2f,%.0f\n", sf, ms);
+        return;
+    }
+
+    /* DITHER,pct(0..30),hz(20..250): PWM square-wave dither while moving; 0 = off. */
+    if (strcmp(command, "DITHER") == 0) {
+        float pct, hz; char *a = strtok(NULL, ","), *b = strtok(NULL, ",");
+        if (!control_parse_float(a, &pct) || !control_parse_float(b, &hz) || strtok(NULL, ",") ||
+            pct < 0 || pct > DITHER_MAX_PCT || hz < DITHER_MIN_HZ || hz > DITHER_MAX_HZ) {
+            reply("ERR,DITHER,expected_pct_0to30,hz_20to250\n"); return;
+        }
+        portENTER_CRITICAL(&g_state_lock);
+        m->dither_pct = pct; m->dither_hz = hz;
+        portEXIT_CRITICAL(&g_state_lock);
+        reply("ACK,DITHER,%.1f,%.0f\n", pct, hz);
         return;
     }
 
@@ -1603,7 +1684,7 @@ static void multi_print_motor(const telemetry_t *t)
 /* Settings of one motor, round-robin at ~3 Hz per motor in MULTI mode. */
 static void multi_print_config(int motor, const telemetry_t *t)
 {
-    printf("CFG,M%d,%s,%.4f,%.4f,%.3f,%.3f,%.6f,%.6f,%.4f,%.4f,%.4f,%.4f,%.4f,%.5f,%d,%d,%.2f,%.4f,%.4f,%.4f,%.4f,%d,%d,%.4f,%.4f,%d,%.2f\n",
+    printf("CFG,M%d,%s,%.4f,%.4f,%.3f,%.3f,%.6f,%.6f,%.4f,%.4f,%.4f,%.4f,%.4f,%.5f,%d,%d,%.2f,%.4f,%.4f,%.4f,%.4f,%d,%d,%.4f,%.4f,%d,%.2f,%.2f,%.0f,%.1f,%.0f\n",
            motor + 1, k_motor_names[motor], t->pid_kp, t->pid_ki,
            t->pid_output_min_percent, t->pid_output_max_percent,
            t->speed.kp, t->speed.ki, t->speed.current_limit_a,
@@ -1611,7 +1692,8 @@ static void multi_print_config(int motor, const telemetry_t *t)
            t->position.accel_rad_s2, t->position.tolerance_rad, encoder_get_sign(motor),
            t->hold_brake ? 1 : 0, t->friction_pwm, t->gravity_a, t->gravity_offset_rad,
            t->friction_ic_a, t->friction_is_a, t->fmap_bins[0], t->fmap_bins[1],
-           t->gravity2_a, t->gravity2_offset_rad, t->gravity2_motor + 1, t->gravity2_coupling);
+           t->gravity2_a, t->gravity2_offset_rad, t->gravity2_motor + 1, t->gravity2_coupling,
+           t->fricb_start, t->fricb_ramp_ms, t->dither_pct, t->dither_hz);
 }
 
 static void print_info(void)
@@ -1784,6 +1866,8 @@ static void motor_init_state(motor_t *m, int index)
     m->current_invalid_streak = 0;
     m->current_ride_through_total = 0;
     m->fmap[0].valid = m->fmap[1].valid = false;
+    m->fricb_start = 1.0f; m->fricb_ramp_us = FRIC_BREAKAWAY_RAMP_US;
+    m->dither_pct = 0.0f; m->dither_hz = 80.0f;
     m->gravity_a = 0.0f;      /* tune per joint with GRAV */
     m->gravity_offset_rad = 0.0f;
     m->gravity2_a = 0.0f; m->gravity2_offset_rad = 0.0f; m->gravity2_coupling = 0.0f;

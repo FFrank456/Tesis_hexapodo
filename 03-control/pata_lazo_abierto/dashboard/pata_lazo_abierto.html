@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pata lazo abierto</title>
+<style>
+:root { --bg:#f6f7f9; --card:#fff; --fg:#1d232b; --muted:#6a7380; --line:#d9dde3; --acc:#2563eb; --ok:#15803d; --err:#b91c1c;
+  --c1:#2563eb; --c2:#d97706; --c3:#0d9488; }
+@media (prefers-color-scheme: dark) { :root { --bg:#12161c; --card:#1b2129; --fg:#e6e9ee; --muted:#8b95a3; --line:#2c3440; --acc:#60a5fa;
+  --ok:#4ade80; --err:#f87171; --c1:#60a5fa; --c2:#fbbf24; --c3:#2dd4bf; } }
+* { box-sizing:border-box; }
+body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.4 system-ui, sans-serif; }
+header { display:flex; gap:12px; align-items:center; padding:12px 16px; border-bottom:1px solid var(--line); flex-wrap:wrap; }
+h1 { font-size:18px; margin:0 12px 0 0; }
+main { display:grid; grid-template-columns:minmax(320px, 440px) 1fr; gap:16px; padding:16px; }
+@media (max-width: 900px) { main { grid-template-columns:1fr; } }
+section { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:12px; margin-bottom:16px; overflow-x:auto; }
+main > div { min-width:0; }
+h2 { font-size:14px; margin:0 0 8px; }
+table { border-collapse:collapse; width:100%; }
+th, td { padding:3px 4px; text-align:right; border-bottom:1px solid var(--line); }
+th:first-child, td:first-child { text-align:left; }
+input { width:70px; padding:3px; background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:4px; text-align:right; }
+input.name { width:130px; text-align:left; }
+button { padding:6px 12px; border-radius:6px; border:1px solid var(--line); background:var(--card); color:var(--fg); cursor:pointer; }
+button.primary { background:var(--acc); color:#fff; border-color:var(--acc); }
+button.stop { background:var(--err); color:#fff; border-color:var(--err); font-weight:600; }
+.row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin:6px 0; }
+.muted { color:var(--muted); }
+#status { color:var(--muted); }
+#live td { font-variant-numeric:tabular-nums; }
+canvas { width:100%; height:200px; display:block; }
+pre { max-height:220px; overflow:auto; background:var(--bg); padding:8px; border-radius:6px; margin:0; font-size:12px; }
+.err { color:var(--err); } .ok { color:var(--ok); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Pata en lazo abierto</h1>
+  <button id="connect" class="primary">Conectar</button>
+  <button id="zero">Cero de encoders</button>
+  <button id="run" class="primary" disabled>Enviar y correr</button>
+  <button id="stop" class="stop">STOP (barra espaciadora)</button>
+  <span id="status">Desconectado</span>
+</header>
+<main>
+<div>
+  <section>
+    <h2>Ciclo de paso (rad)</h2>
+    <table id="poses"><thead><tr><th>Postura</th><th>Coxa</th><th>Fémur</th><th>Tibia</th><th></th></tr></thead><tbody></tbody></table>
+    <div class="row"><button id="addPose">+ Postura</button><span class="muted">Máximo 8. Se recorren en orden y luego se vuelve a la primera.</span></div>
+  </section>
+  <section>
+    <h2>Mando por articulación</h2>
+    <table><thead><tr><th></th><th>Coxa</th><th>Fémur</th><th>Tibia</th></tr></thead><tbody>
+      <tr><td title="PWM con que arranca hacia el objetivo">PWM inicial (%)</td><td><input id="pw0" value="60"></td><td><input id="pw1" value="60"></td><td><input id="pw2" value="60"></td></tr>
+      <tr><td title="Banda de llegada; se vuelve a empujar si se aleja más de 3 veces">Tolerancia (rad)</td><td><input id="tl0" value="0.03"></td><td><input id="tl1" value="0.03"></td><td><input id="tl2" value="0.03"></td></tr>
+      <tr><td title="Fuera de este rango se detiene todo">Mínimo (rad)</td><td><input id="mn0" value="-0.6"></td><td><input id="mn1" value="-1.1"></td><td><input id="mn2" value="-1.1"></td></tr>
+      <tr><td>Máximo (rad)</td><td><input id="mx0" value="1.6"></td><td><input id="mx1" value="1.1"></td><td><input id="mx2" value="0.8"></td></tr>
+    </tbody></table>
+    <div class="row"><label title="Si no avanza 0.01 rad en este tiempo, el PWM sube">Sin avance (ms) <input id="stall" value="150"></label>
+      <label>sube PWM (%) <input id="step" value="10"></label></div>
+    <div class="row"><label>Tiempo máx. por postura (ms) <input id="timeout" value="5000"></label>
+      <label>Pausa (ms) <input id="dwell" value="200"></label><label>Ciclos <input id="cycles" value="3"></label></div>
+  </section>
+  <section>
+    <h2>Mensajes del ESP32</h2>
+    <pre id="log"></pre>
+  </section>
+</div>
+<div>
+  <section>
+    <h2>En vivo</h2>
+    <table id="live"><thead><tr><th></th><th>Ángulo</th><th>Objetivo</th><th>PWM</th><th>Corriente medida</th><th>Corriente real est.</th></tr></thead><tbody>
+      <tr><td style="color:var(--c1)">Coxa</td><td id="a0">—</td><td id="o0">—</td><td id="p0">—</td><td id="i0">—</td><td id="r0">—</td></tr>
+      <tr><td style="color:var(--c2)">Fémur</td><td id="a1">—</td><td id="o1">—</td><td id="p1">—</td><td id="i1">—</td><td id="r1">—</td></tr>
+      <tr><td style="color:var(--c3)">Tibia</td><td id="a2">—</td><td id="o2">—</td><td id="p2">—</td><td id="i2">—</td><td id="r2">—</td></tr>
+    </tbody></table>
+    <p class="muted">La corriente medida es la real × ciclo de trabajo (el DRV8876 solo mide con el PWM encendido); la real estimada es medida ÷ ciclo de trabajo.</p>
+    <canvas id="cPos"></canvas>
+    <canvas id="cCur"></canvas>
+    <p class="muted">Arriba: ángulos (línea) y objetivos (punteado), últimos 20 s. Abajo: corriente real estimada (A).</p>
+  </section>
+  <section>
+    <h2>Resultado por postura</h2>
+    <table id="res"><thead><tr><th>Ciclo · postura</th><th>Tiempo (s)</th><th>PWM máx C/F/T (%)</th><th>Corriente real máx C/F/T (A)</th><th>Media C/F/T (A)</th><th>Re-empujes</th></tr></thead><tbody></tbody></table>
+    <div class="row"><button id="csv">Descargar CSV</button><span id="recinfo" class="muted"></span></div>
+  </section>
+</div>
+</main>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const NAMES = ["Coxa", "Fémur", "Tibia"];
+const DEFAULT_POSES = [["Apoyo adelante", 0.30, 0.00, 0.00], ["Empujar (apoyo atrás)", -0.30, 0.00, 0.00],
+  ["Levantar", -0.30, -0.40, 0.20], ["Avanzar en el aire", 0.30, -0.40, 0.20]];
+let port = null, writer = null, reader = null, connected = false;
+const samples = [];            // {t, m:[{duty,cur,pos,ref}]}
+const record = [];             // raw telemetry rows for the CSV
+const events = [];             // GAIT lines for the CSV
+let poseStartIdx = 0;          // samples index where the current pose started
+
+/* ---------- Pose table ---------- */
+function addPoseRow(p) {
+  const tb = $("poses").tBodies[0];
+  if (tb.rows.length >= 8) return;
+  const tr = tb.insertRow();
+  tr.innerHTML = `<td><input class="name" value="${p[0]}"></td>` + [1, 2, 3].map((k) => `<td><input value="${p[k].toFixed(2)}"></td>`).join("") +
+    `<td><button title="Quitar">✕</button></td>`;
+  tr.querySelector("button").onclick = () => tr.remove();
+}
+function loadPoses() {
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem("lazo_abierto_poses") || "null"); } catch (e) { saved = null; }
+  (Array.isArray(saved) && saved.length ? saved : DEFAULT_POSES).forEach(addPoseRow);
+}
+function readPoses() {
+  return [...$("poses").tBodies[0].rows].map((tr) => { const v = [...tr.querySelectorAll("input")].map((i) => i.value); return [v[0], +v[1], +v[2], +v[3]]; });
+}
+$("addPose").onclick = () => addPoseRow(["Postura", 0, 0, 0]);
+loadPoses();
+
+/* ---------- Serial ---------- */
+function log(text, cls) {
+  const el = $("log"), line = document.createElement("div");
+  line.textContent = text; if (cls) line.className = cls;
+  el.appendChild(line); while (el.childNodes.length > 400) el.removeChild(el.firstChild);
+  el.scrollTop = el.scrollHeight;
+}
+async function send(cmd) {
+  if (!writer) { log("No conectado: " + cmd, "err"); return; }
+  log("> " + cmd);
+  await writer.write(new TextEncoder().encode(cmd + "\n"));
+}
+async function connect() {
+  if (connected) { await disconnect(); return; }
+  if (!("serial" in navigator)) { log("Este navegador no tiene Web Serial: usa Chrome o Edge.", "err"); return; }
+  try { port = await navigator.serial.requestPort(); await port.open({ baudRate: 460800, bufferSize: 65536 }); }
+  catch (e) { log("No se pudo abrir el puerto: " + e.message, "err"); return; }
+  connected = true; writer = port.writable.getWriter();
+  $("connect").textContent = "Desconectar"; $("run").disabled = false; $("status").textContent = "Conectado";
+  readLoop();
+  setTimeout(() => { send("TEL,MULTI"); send("GAIT,INFO"); }, 300);
+}
+async function disconnect() {
+  connected = false;
+  try { if (writer) { await send("STOP"); writer.releaseLock(); } } catch (e) {}
+  try { if (reader) await reader.cancel(); } catch (e) {}
+  try { await port.close(); } catch (e) {}
+  writer = reader = null;
+  $("connect").textContent = "Conectar"; $("run").disabled = true; $("status").textContent = "Desconectado";
+}
+async function readLoop() {
+  const dec = new TextDecoder(); let buf = "";
+  while (connected && port.readable) {
+    reader = port.readable.getReader();
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let n;
+        while ((n = buf.indexOf("\n")) >= 0) { const l = buf.slice(0, n).replace(/\r$/, ""); buf = buf.slice(n + 1); if (l) handleLine(l); }
+        if (buf.length > 8192) buf = "";
+      }
+    } catch (e) { log("Lectura: " + e.message, "err"); }
+    finally { reader.releaseLock(); }
+  }
+}
+
+/* ---------- Incoming lines ---------- */
+function handleLine(line) {
+  if (line.startsWith("T,")) return handleT(line);
+  if (line.startsWith("CFG,") || line.startsWith("MHEADER,") || line.startsWith("HEADER,") || line.startsWith("DATA,")) return;
+  if (line.startsWith("GAIT,")) { events.push([samples.length ? samples[samples.length - 1].t : 0, line]); handleGait(line); }
+  log(line, /ERR|TIMEOUT|RANGE/.test(line) ? "err" : /ACK|DONE/.test(line) ? "ok" : "");
+}
+function handleT(line) {
+  const f = line.split(",");
+  if (f.length < 3 + 11 * 3) return;
+  const s = { t: +f[1] / 1000, m: [] };
+  for (let i = 0; i < 3; i++) {
+    const b = 3 + i * 11;
+    s.m.push({ duty: +f[b + 1], cur: +f[b + 2], pos: +f[b + 4], ref: +f[b + 7] });
+  }
+  samples.push(s); record.push(f.slice(1));
+  if (samples.length > 200000) { samples.splice(0, 50000); poseStartIdx = Math.max(0, poseStartIdx - 50000); }
+  if (record.length % 100 === 0) $("recinfo").textContent = `${record.length} muestras grabadas (${(record.length / 100).toFixed(0)} s)`;
+}
+const realCur = (m) => Math.abs(m.duty) > 5 ? m.cur / (Math.abs(m.duty) / 100) : 0;
+function handleGait(line) {
+  const f = line.split(",");
+  if (f[1] === "POSE") {
+    const seg = samples.slice(poseStartIdx); poseStartIdx = samples.length;
+    const pk = [0, 1, 2].map((i) => seg.reduce((q, s) => Math.max(q, realCur(s.m[i])), 0));
+    const mean = [0, 1, 2].map((i) => { const v = seg.filter((s) => Math.abs(s.m[i].duty) > 5); return v.length ? v.reduce((q, s) => q + realCur(s.m[i]), 0) / v.length : 0; });
+    const names = readPoses().map((p) => p[0]);
+    const tr = $("res").tBodies[0].insertRow();
+    tr.innerHTML = `<td>${f[2]} · ${f[3]} ${names[+f[3] - 1] || ""}</td><td>${(+f[4] / 1000).toFixed(2)}</td><td>${f[9]}/${f[10]}/${f[11]}</td>` +
+      `<td>${pk.map((x) => x.toFixed(2)).join("/")}</td><td>${mean.map((x) => x.toFixed(2)).join("/")}</td><td>${f[5]}</td>`;
+  } else if (f[1] === "DONE") { $("status").textContent = `Ciclo terminado en ${(+f[2] / 1000).toFixed(1)} s`; }
+  else if (f[1] === "TIMEOUT") { $("status").textContent = `Detenido: ${NAMES[+f[4].slice(1) - 1]} no llegó a la postura ${f[3]} en ${(+f[5] / 1000).toFixed(1)} s`; }
+  else if (f[1] === "RANGE") { $("status").textContent = `Detenido: ${NAMES[+f[4].slice(1) - 1]} salió de su rango`; }
+  else if (f[1] === "STOPPED") { $("status").textContent = "Detenido por STOP"; }
+}
+
+/* ---------- Commands ---------- */
+const num = (id) => +$(id).value;
+async function runGait() {
+  const poses = readPoses();
+  try { localStorage.setItem("lazo_abierto_poses", JSON.stringify(poses)); } catch (e) {}
+  for (let j = 0; j < 3; j++) {
+    const mn = num("mn" + j), mx = num("mx" + j);
+    const bad = poses.find((p) => !(p[j + 1] >= mn && p[j + 1] <= mx));
+    if (bad) { log(`"${bad[0]}": ${NAMES[j]} fuera de su rango (${mn} … ${mx})`, "err"); return; }
+  }
+  $("res").tBodies[0].innerHTML = ""; poseStartIdx = samples.length;
+  const cmds = ["STOP", "GAIT,CLEAR", ...poses.map((p) => `GAIT,POSE,${p[1]},${p[2]},${p[3]}`),
+    `GAIT,PWM,${num("pw0")},${num("pw1")},${num("pw2")}`, `GAIT,TOL,${num("tl0")},${num("tl1")},${num("tl2")}`,
+    ...[0, 1, 2].map((j) => `GAIT,LIM,${j + 1},${num("mn" + j)},${num("mx" + j)}`),
+    `GAIT,STALL,${num("step")},${num("stall")}`, `GAIT,TIME,${num("timeout")},${num("dwell")}`, `GAIT,RUN,${num("cycles")}`];
+  for (const c of cmds) { await send(c); await new Promise((r) => setTimeout(r, 60)); }
+  $("status").textContent = "Corriendo…";
+}
+$("connect").onclick = connect;
+$("run").onclick = runGait;
+$("stop").onclick = () => send("STOP");
+$("zero").onclick = async () => { await send("STOP"); for (const m of ["M1", "M2", "M3"]) { await send(`${m},ENCODER,ZERO`); await new Promise((r) => setTimeout(r, 60)); } };
+document.addEventListener("keydown", (e) => { if (e.code === "Space" && e.target.tagName !== "INPUT") { e.preventDefault(); send("STOP"); } });
+$("csv").onclick = () => {
+  const head = ["time_ms", "selected"]; const nm = ["mode", "duty_percent", "current_a", "current_ref_a", "position_rad", "speed_rad_s",
+    "speed_ref_rad_s", "position_ref_rad", "position_state", "current_status", "flags"];
+  for (let i = 1; i <= 3; i++) nm.forEach((n) => head.push(`m${i}_${n}`));
+  const rows = [head.join(","), ...record.map((r) => r.join(",")), "", "#eventos", ...events.map((e) => `#${e[0]},${e[1]}`)];
+  const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([rows.join("\n")], { type: "text/csv" }));
+  const d = new Date(), z = (x) => String(x).padStart(2, "0");
+  a.download = `lazo_abierto_${d.getFullYear()}${z(d.getMonth() + 1)}${z(d.getDate())}_${z(d.getHours())}${z(d.getMinutes())}.csv`; a.click();
+};
+
+/* ---------- Live view ---------- */
+function plot(cv, series, lo, hi) {
+  const dpr = window.devicePixelRatio || 1, w = cv.clientWidth, h = cv.clientHeight;
+  cv.width = w * dpr; cv.height = h * dpr;
+  const g = cv.getContext("2d"); g.scale(dpr, dpr);
+  const css = getComputedStyle(document.documentElement);
+  g.strokeStyle = css.getPropertyValue("--line"); g.lineWidth = 1; g.strokeRect(0.5, 0.5, w - 1, h - 1);
+  g.fillStyle = css.getPropertyValue("--muted"); g.font = "11px system-ui"; g.fillText(hi.toFixed(1), 4, 12); g.fillText(lo.toFixed(1), 4, h - 4);
+  if (samples.length < 2) return;
+  const t1 = samples[samples.length - 1].t, t0 = t1 - 20;
+  const view = samples.filter((s) => s.t >= t0), step = Math.max(1, Math.floor(view.length / w));
+  for (const [get, color, dash] of series) {
+    g.strokeStyle = css.getPropertyValue(color); g.setLineDash(dash || []); g.lineWidth = 1.5; g.beginPath();
+    view.forEach((s, k) => { if (k % step) return; const x = (s.t - t0) / 20 * w, y = h - (get(s) - lo) / (hi - lo) * h;
+      k ? g.lineTo(x, y) : g.moveTo(x, y); });
+    g.stroke();
+  }
+  g.setLineDash([]);
+}
+function frame() {
+  const s = samples[samples.length - 1];
+  if (s) for (let i = 0; i < 3; i++) {
+    const m = s.m[i];
+    $("a" + i).textContent = m.pos.toFixed(3); $("o" + i).textContent = m.ref.toFixed(2); $("p" + i).textContent = m.duty.toFixed(0) + " %";
+    $("i" + i).textContent = m.cur.toFixed(3) + " A"; $("r" + i).textContent = realCur(m).toFixed(3) + " A";
+  }
+  const cols = ["--c1", "--c2", "--c3"];
+  plot($("cPos"), [0, 1, 2].flatMap((i) => [[(x) => x.m[i].pos, cols[i]], [(x) => x.m[i].ref, cols[i], [4, 4]]]), -1.5, 1.7);
+  plot($("cCur"), [0, 1, 2].map((i) => [(x) => realCur(x.m[i]), cols[i]]), 0, 1.0);
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

@@ -1,0 +1,388 @@
+#include <stdio.h>
+#include <stdbool.h>
+#include <stdlib.h>
+#include <string.h>
+#include <fcntl.h>
+#include <unistd.h>
+
+#include "driver/adc.h"
+#include "driver/ledc.h"
+#include "esp_err.h"
+#include "esp_log.h"
+#include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+
+/* Driver input map:
+ * GPIO27 -> IN1/PWM for clockwise motor rotation.
+ * GPIO26 -> IN2/PWM for counterclockwise motor rotation.
+ * GPIO32 -> ADC1_CH4 current/voltage feedback input.
+ */
+#define PWM_GPIO_CW             27
+#define PWM_GPIO_CCW            26
+#define PWM_TIMER               LEDC_TIMER_0
+#define PWM_MODE                LEDC_LOW_SPEED_MODE
+#define PWM_CHANNEL_CW          LEDC_CHANNEL_0
+#define PWM_CHANNEL_CCW         LEDC_CHANNEL_1
+/* 12-bit PWM on ESP32 cannot reach 20 kHz with the 80 MHz LEDC clock.
+ * 10 kHz keeps the full 0..4095 duty range and avoids ledc_timer_config() failing.
+ */
+#define PWM_FREQUENCY_HZ        100
+#define PWM_RESOLUTION          LEDC_TIMER_12_BIT
+#define PWM_MAX_DUTY            ((1U << 12) - 1U)
+#define PWM_INITIAL_DUTY        0
+
+#define ADC_INPUT_GPIO          32
+#define ADC_INPUT_CHANNEL       ADC1_CHANNEL_4
+#define ADC_WIDTH_BITS          12
+#define ADC_MAX_RAW             ((1U << ADC_WIDTH_BITS) - 1U)
+#define ADC_REFERENCE_VOLTAGE   3.3f
+#define ADC_SCALE_DIVIDER       2.49f
+#define SAMPLE_PERIOD_MS        10
+#define COMMAND_BUFFER_SIZE     64
+
+typedef enum {
+    MOTOR_STOP = 0,
+    MOTOR_CW,
+    MOTOR_CCW,
+} motor_direction_t;
+
+typedef struct {
+    uint32_t time_ms;
+    int adc_raw;
+    float adc_voltage;
+    float scaled_value;
+    motor_direction_t direction;
+    uint32_t duty_cw;
+    uint32_t duty_ccw;
+} telemetry_t;
+
+static void pwm_init(void)
+{
+    ledc_timer_config_t pwm_timer = {
+        .speed_mode = PWM_MODE,
+        .duty_resolution = PWM_RESOLUTION,
+        .timer_num = PWM_TIMER,
+        .freq_hz = PWM_FREQUENCY_HZ,
+        .clk_cfg = LEDC_AUTO_CLK,
+    };
+    ESP_ERROR_CHECK(ledc_timer_config(&pwm_timer));
+
+    ledc_channel_config_t pwm_channel_cw = {
+        .gpio_num = PWM_GPIO_CW,
+        .speed_mode = PWM_MODE,
+        .channel = PWM_CHANNEL_CW,
+        .intr_type = LEDC_INTR_DISABLE,
+        .timer_sel = PWM_TIMER,
+        .duty = PWM_INITIAL_DUTY,
+        .hpoint = 0,
+    };
+    ESP_ERROR_CHECK(ledc_channel_config(&pwm_channel_cw));
+
+    ledc_channel_config_t pwm_channel_ccw = {
+        .gpio_num = PWM_GPIO_CCW,
+        .speed_mode = PWM_MODE,
+        .channel = PWM_CHANNEL_CCW,
+        .intr_type = LEDC_INTR_DISABLE,
+        .timer_sel = PWM_TIMER,
+        .duty = PWM_INITIAL_DUTY,
+        .hpoint = 0,
+    };
+    ESP_ERROR_CHECK(ledc_channel_config(&pwm_channel_ccw));
+}
+
+static void adc_init(void)
+{
+    ESP_ERROR_CHECK(adc1_config_width(ADC_WIDTH_BIT_12));
+    ESP_ERROR_CHECK(adc1_config_channel_atten(ADC_INPUT_CHANNEL, ADC_ATTEN_DB_12));
+}
+
+static void pwm_set_duty(ledc_channel_t channel, uint32_t duty)
+{
+    if (duty > PWM_MAX_DUTY) {
+        duty = PWM_MAX_DUTY;
+    }
+
+    ESP_ERROR_CHECK(ledc_set_duty(PWM_MODE, channel, duty));
+    ESP_ERROR_CHECK(ledc_update_duty(PWM_MODE, channel));
+}
+
+static float adc_raw_to_voltage(int raw)
+{
+    return ((float)raw * ADC_REFERENCE_VOLTAGE) / (float)ADC_MAX_RAW;
+}
+
+static const char *motor_direction_to_text(motor_direction_t direction)
+{
+    switch (direction) {
+    case MOTOR_CW:
+        return "CW";
+    case MOTOR_CCW:
+        return "CCW";
+    case MOTOR_STOP:
+    default:
+        return "STOP";
+    }
+}
+
+static telemetry_t read_telemetry(motor_direction_t direction, uint32_t duty_cw, uint32_t duty_ccw)
+{
+    telemetry_t telemetry = {
+        .time_ms = (uint32_t)(esp_timer_get_time() / 1000ULL),
+        .adc_raw = adc1_get_raw(ADC_INPUT_CHANNEL),
+        .direction = direction,
+        .duty_cw = duty_cw,
+        .duty_ccw = duty_ccw,
+    };
+
+    telemetry.adc_voltage = adc_raw_to_voltage(telemetry.adc_raw);
+    telemetry.scaled_value = telemetry.adc_voltage / ADC_SCALE_DIVIDER;
+    return telemetry;
+}
+
+static void motor_set_output(motor_direction_t direction, uint32_t duty, telemetry_t *telemetry)
+{
+    uint32_t duty_cw = 0;
+    uint32_t duty_ccw = 0;
+
+    if (duty > PWM_MAX_DUTY) {
+        duty = PWM_MAX_DUTY;
+    }
+
+    switch (direction) {
+    case MOTOR_CW:
+        duty_cw = duty;
+        break;
+    case MOTOR_CCW:
+        duty_ccw = duty;
+        break;
+    case MOTOR_STOP:
+    default:
+        direction = MOTOR_STOP;
+        break;
+    }
+
+    /* Set the inactive bridge input first so IN1 and IN2 are never driven together. */
+    pwm_set_duty(PWM_CHANNEL_CW, 0);
+    pwm_set_duty(PWM_CHANNEL_CCW, 0);
+    pwm_set_duty(PWM_CHANNEL_CW, duty_cw);
+    pwm_set_duty(PWM_CHANNEL_CCW, duty_ccw);
+
+    if (telemetry != NULL) {
+        telemetry->direction = direction;
+        telemetry->duty_cw = duty_cw;
+        telemetry->duty_ccw = duty_ccw;
+    }
+}
+
+static void serial_command_init(void)
+{
+    int flags = fcntl(STDIN_FILENO, F_GETFL, 0);
+    if (flags >= 0) {
+        fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
+    }
+}
+
+static bool parse_direction(const char *text, motor_direction_t *direction)
+{
+    if (strcmp(text, "STOP") == 0) {
+        *direction = MOTOR_STOP;
+        return true;
+    }
+
+    if (strcmp(text, "CW") == 0) {
+        *direction = MOTOR_CW;
+        return true;
+    }
+
+    if (strcmp(text, "CCW") == 0) {
+        *direction = MOTOR_CCW;
+        return true;
+    }
+
+    return false;
+}
+
+static void handle_serial_command(char *line, telemetry_t *telemetry)
+{
+    char *command = strtok(line, ",");
+    char *direction_text = strtok(NULL, ",");
+    char *duty_text = strtok(NULL, ",");
+    motor_direction_t direction = MOTOR_STOP;
+    uint32_t duty = 0;
+
+    if (command == NULL || direction_text == NULL || duty_text == NULL) {
+        return;
+    }
+
+    if (strcmp(command, "SET") != 0 || !parse_direction(direction_text, &direction)) {
+        return;
+    }
+
+    duty = (uint32_t)strtoul(duty_text, NULL, 10);
+    motor_set_output(direction, duty, telemetry);
+    printf("ACK,%s,%lu\n", motor_direction_to_text(direction), (unsigned long)duty);
+}
+
+static void serial_command_poll(telemetry_t *telemetry)
+{
+    static char command_buffer[COMMAND_BUFFER_SIZE];
+    static size_t command_length = 0;
+    char received;
+
+    while (read(STDIN_FILENO, &received, 1) == 1) {
+        if (received == '\n' || received == '\r') {
+            if (command_length > 0) {
+                command_buffer[command_length] = '\0';
+                handle_serial_command(command_buffer, telemetry);
+                command_length = 0;
+            }
+            continue;
+        }
+
+        if (command_length < COMMAND_BUFFER_SIZE - 1) {
+            command_buffer[command_length++] = received;
+        } else {
+            command_length = 0;
+        }
+    }
+}
+
+static void processing_print_header(void)
+{
+    printf("HEADER,time_ms,adc_raw,adc_voltage,scaled_value,direction_code,direction_text,duty_cw,duty_ccw\n");
+}
+
+static void processing_print_telemetry(const telemetry_t *telemetry)
+{
+    printf("DATA,%lu,%d,%.3f,%.3f,%d,%s,%lu,%lu\n",
+           (unsigned long)telemetry->time_ms,
+           telemetry->adc_raw,
+           telemetry->adc_voltage,
+           telemetry->scaled_value,
+           (int)telemetry->direction,
+           motor_direction_to_text(telemetry->direction),
+           (unsigned long)telemetry->duty_cw,
+           (unsigned long)telemetry->duty_ccw);
+    fflush(stdout);
+}
+
+void app_main(void)
+{
+    telemetry_t telemetry = {0};
+
+    esp_log_level_set("*", ESP_LOG_NONE);
+
+    pwm_init();
+    adc_init();
+    serial_command_init();
+
+    motor_set_output(MOTOR_STOP, 0, &telemetry);
+
+    processing_print_header();
+
+    while (true) {
+        serial_command_poll(&telemetry);
+        telemetry = read_telemetry(telemetry.direction, telemetry.duty_cw, telemetry.duty_ccw);
+
+        processing_print_telemetry(&telemetry);
+        vTaskDelay(pdMS_TO_TICKS(SAMPLE_PERIOD_MS));
+    }
+}
+/*
+ * main.c - Controlador de corriente / telemetría para motor DC (ESP-IDF)
+ *
+ * Resumen
+ * -------
+ * Este fichero implementa:
+ * - Inicialización y control de dos salidas PWM (IN1/IN2) para controlar
+ *   la dirección y velocidad de un puente H que maneja un motor DC.
+ * - Lectura de una entrada ADC para medir corriente/voltaje de retroalimentación.
+ * - Recolección y emisión periódica de telemetría por salida estándar en formato CSV.
+ *
+ * Mapado de pines (hardware)
+ * -------------------------
+ * - PWM_GPIO_CW  (GPIO27) -> IN1 / PWM para rotación horario (CW)
+ * - PWM_GPIO_CCW (GPIO26) -> IN2 / PWM para rotación antihorario (CCW)
+ * - ADC_INPUT_GPIO (GPIO32) -> Entrada ADC1_CH4 para sensado de corriente/voltaje
+ *
+ * Parámetros importantes
+ * ----------------------
+ * - Frecuencia PWM: PWM_FREQUENCY_HZ (10 kHz)
+ * - Resolución PWM: PWM_RESOLUTION (12 bits)
+ * - Rango ADC: ADC_WIDTH_BITS (12 bits)
+ * - ADC_REFERENCE_VOLTAGE: voltaje de referencia (3.3 V)
+ * - ADC_SCALE_DIVIDER: divisor/calibración para convertir voltaje ADC en la magnitud
+ *                      real medida (corriente o voltaje escalado según circuito)
+ * - SAMPLE_PERIOD_MS: período de muestreo y envío de telemetría (ms)
+ *
+ * Estructuras de datos
+ * --------------------
+ * - motor_direction_t: enum { MOTOR_STOP, MOTOR_CW, MOTOR_CCW }
+ *   Indica la dirección objetivo del motor.
+ *
+ * - telemetry_t:
+ *   - time_ms: timestamp en ms (esp_timer_get_time)
+ *   - adc_raw: lectura cruda ADC (0..ADC_MAX_RAW)
+ *   - adc_voltage: voltaje calculado a partir de adc_raw
+ *   - scaled_value: valor escalado (p. ej. corriente) usando ADC_SCALE_DIVIDER
+ *   - direction: dirección actual del motor
+ *   - duty_cw, duty_ccw: deberes PWM aplicados a cada canal
+ *
+ * Funciones principales
+ * ---------------------
+ * - pwm_init(void)
+ *   Configura el timer LEDC y dos canales PWM con la resolución/frecuencia definidas.
+ *
+ * - adc_init(void)
+ *   Configura el ADC1 con la resolución y atenuación adecuada para el rango de entrada.
+ *
+ * - pwm_set_duty(ledc_channel_t channel, uint32_t duty)
+ *   Escribe y actualiza el duty cycle del canal LEDC. Clampa el valor a PWM_MAX_DUTY.
+ *
+ * - adc_raw_to_voltage(int raw)
+ *   Convierte la lectura ADC cruda al voltaje real (V) usando ADC_REFERENCE_VOLTAGE y ADC_MAX_RAW.
+ *
+ * - motor_direction_to_text(motor_direction_t direction)
+ *   Devuelve una cadena corta para la dirección ("CW", "CCW", "STOP").
+ *
+ * - read_telemetry(motor_direction_t direction, uint32_t duty_cw, uint32_t duty_ccw)
+ *   Lee el ADC, toma timestamp y rellena una estructura telemetry_t con valores calculados.
+ *
+ * - motor_set_output(motor_direction_t direction, uint32_t duty, telemetry_t *telemetry)
+ *   Aplica el duty solicitado al canal correspondiente y pone a 0 el canal opuesto
+ *   primero para evitar conducir simultáneamente ambas entradas del puente H.
+ *   Actualiza la estructura de telemetría si se provee un puntero.
+ *
+ * - processing_print_header(void)
+ *   Imprime la cabecera CSV para las líneas de telemetría.
+ *
+ * - processing_print_telemetry(const telemetry_t *telemetry)
+ *   Imprime una línea CSV con los campos de telemetry_t. Hace fflush(stdout).
+ *
+ * - app_main(void)
+ *   Inicializa subsistemas, detiene el motor por seguridad, imprime la cabecera y
+ *   entra en un bucle que periódicamente lee la telemetría y la imprime.
+ *
+ * Buenas prácticas y consideraciones
+ * ---------------------------------
+ * - Seguridad de puente H: nunca aplicar duty > 0 simultáneamente en ambos canales.
+ *   La implementación actual escribe primero 0 al canal inactivo para minimizar riesgo.
+ * - Calibración ADC: ADC_SCALE_DIVIDER debe ajustarse según el circuito de medición
+ *   (shunt, amplificador, divisor de tensión) para obtener valores de corriente correctos.
+ * - Filtrado y muestreo: si la señal medida es ruidosa, considerar promediar varias
+ *   muestras ADC o aplicar filtrado digital.
+ * - Protección: añadir límites de corriente/tiempo y detección de fallos si se usa
+ *   en aplicaciones donde una corriente excesiva puede dañar componentes.
+ *
+ * Uso
+ * ---
+ * - Compilar y flashear con ESP-IDF.
+ * - Conectar monitor serie a la UART usada por el proyecto para recibir las líneas CSV.
+ * - Control: el sketch de Processing puede enviar comandos SET,STOP,0,
+ *   SET,CW,duty o SET,CCW,duty por el mismo puerto serial de telemetría.
+ *
+ * Licencia / Autor
+ * ----------------
+ * - Código de ejemplo para uso con ESP-IDF. Adaptar y mejorar según requisitos del proyecto.
+ */

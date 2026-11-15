@@ -144,6 +144,10 @@ canvas { width: 100%; display: block; background: var(--panel2); border-radius: 
         <label class="atl">b (A·s/rad)<input type="number" step="0.0005" id="tn_b"></label>
         <label class="atl">Ic Coulomb (A)<input type="number" step="0.005" id="tn_Ic"></label>
         <label class="atl" title="Corriente de arranque observada en lazo cerrado (sin gravedad)">Is arranque (A)<input type="number" step="0.005" id="tn_Is"></label>
+        <label class="atl" title="Cuando está pegada: 1 = el empujón arranca en Is; 0 = arranca en Ic">Empujón desde Is<select id="tn_fbs"><option value="1">sí (rápido)</option><option value="0">no (desde Ic)</option></select></label>
+        <label class="atl" title="Tiempo para que el empujón suba hasta 2×Is">Rampa empujón (ms)<input type="number" step="10" min="20" max="2000" id="tn_fbr" value="200"></label>
+        <label class="atl" title="Onda cuadrada sumada al PWM mientras se pide movimiento; 0 = apagado">Dither (% PWM)<input type="number" step="1" min="0" max="30" id="tn_dp" value="10"></label>
+        <label class="atl">Dither (Hz)<input type="number" step="10" min="20" max="250" id="tn_dh" value="80"></label>
         <label class="atl">G (A)<input type="number" step="0.005" id="tn_G"></label>
         <label class="atl">θ₀ (rad)<input type="number" step="0.05" id="tn_th0"></label>
         <label class="atl" title="Porcentaje de Ic que se compensa (80 % evita que oscile)">Comp. Coulomb (%)<input type="number" step="5" min="0" max="100" id="tn_kc" value="80"></label>
@@ -230,7 +234,7 @@ La prueba hace 0 → A → 0 → −A → 0 (A = "Escalón pos.", recortado al r
     <div class="row" style="align-items:end;margin-top:8px">
       <button class="primary" id="gcStart" title="Sostiene fémur y tibia en una grilla de posturas, mide la corriente de sostén y ajusta la gravedad acoplada">Calibrar gravedad (fémur + tibia)</button>
       <button class="stop" id="gcAbort">Abortar</button>
-      <span class="cfg" id="gcInfo">El peso de la tibia depende de su ángulo respecto del suelo (fémur + tibia): esta calibración lo mide en 25 posturas (unos 3 min).</span>
+      <span class="cfg" id="gcInfo">El peso de la tibia depende de su ángulo respecto del suelo (fémur + tibia): esta calibración lo mide en 25 posturas, subiendo y bajando cada articulación despacio (unos 6 min).</span>
     </div>
     <pre id="wsOut" class="tncmd">Antes: cero de los tres encoders con los eslabones horizontales, pata en el aire, mano cerca (barra espaciadora = STOP TODO).
 Dura unos 3 minutos con las tres articulaciones. Al terminar descarga espacio_trabajo.csv.</pre>
@@ -545,13 +549,15 @@ function handleCfg(line) {
     ilimit: v[6], ppiKp: v[7], ppiKi: v[8], pmax: v[9], pacc: v[10], ptol: v[11], esign: v[12] | 0,
     hold: f.length > 16 ? (v[13] ? "BRAKE" : "COAST") : null, fric: v[14], grav: v[15], gofs: v[16],
     fic: f.length > 20 ? v[17] : NaN, fis: f.length > 20 ? v[18] : NaN,
-    fmapP: f.length > 22 ? v[19] | 0 : -1, fmapM: f.length > 22 ? v[20] | 0 : -1 };
+    fmapP: f.length > 22 ? v[19] | 0 : -1, fmapM: f.length > 22 ? v[20] | 0 : -1,
+    fricbStart: f.length > 30 ? v[25] : NaN, fricbMs: f.length > 30 ? v[26] : NaN,
+    ditherPct: f.length > 30 ? v[27] : NaN, ditherHz: f.length > 30 ? v[28] : NaN };
   state[i].cfg = cfg;
   document.getElementById("cfg" + i).textContent =
     `ESP32: PI CS Kp ${cfg.pidKp} Ki ${cfg.pidKi} · techo PWM ${cfg.pwmMax}% · PI vel Kp ${cfg.spiKp} Ki ${cfg.spiKi}` +
     ` · lím. CS ${cfg.ilimit} A · PI pos Kp ${cfg.ppiKp} Ki ${cfg.ppiKi} · vmax ${cfg.pmax} · acel ${cfg.pacc}` +
     ` · tol ${cfg.ptol} · signo enc ${cfg.esign > 0 ? "+1" : "−1"}` +
-    (cfg.hold ? ` · al llegar ${cfg.hold === "BRAKE" ? "freno" : "suelto"} · fricción ${isFinite(cfg.fic) ? `Ic ${cfg.fic} A, Is ${cfg.fis} A` : "(firmware sin FRICI)"}${cfg.fmapP > 0 || cfg.fmapM > 0 ? ` · mapa de fricción +${cfg.fmapP}/−${cfg.fmapM} tramos` : ""}${cfg.fric > 0 ? ` + ${cfg.fric}% PWM` : ""} · gravedad ${cfg.grav} A θ₀ ${cfg.gofs}` : "");
+    (cfg.hold ? ` · al llegar ${cfg.hold === "BRAKE" ? "freno" : "suelto"} · fricción ${isFinite(cfg.fic) ? `Ic ${cfg.fic} A, Is ${cfg.fis} A` : "(firmware sin FRICI)"}${cfg.fmapP > 0 || cfg.fmapM > 0 ? ` · mapa de fricción +${cfg.fmapP}/−${cfg.fmapM} tramos` : ""}${isFinite(cfg.ditherPct) ? ` · empujón ${cfg.fricbStart >= 1 ? "desde Is" : "desde Ic"} en ${cfg.fricbMs} ms · dither ${cfg.ditherPct > 0 ? cfg.ditherPct + " % a " + cfg.ditherHz + " Hz" : "apagado"}` : ""}${cfg.fric > 0 ? ` + ${cfg.fric}% PWM` : ""} · gravedad ${cfg.grav} A θ₀ ${cfg.gofs}` : "");
   if (!state[i].cfgFilled) {
     state[i].cfgFilled = true;
     const setv = (id, x) => { if (isFinite(x)) document.getElementById(id).value = x; };
@@ -1322,6 +1328,8 @@ function tnRun() {
     const gc = gcCommands(+tnEl("tnMotor").value);
     cmds.push(`${m},FRIC,0`, `${m},FRICI,${ffIc.toFixed(4)},${ffIs.toFixed(4)}`, ...(gc || [`${m},GRAV,${p.G.toFixed(4)},${p.th0.toFixed(4)}`]), `${m},ILIMIT,${ilim.toFixed(3)}`);
     cmds.push(...fmapCommands(+tnEl("tnMotor").value));
+    const fbr = Math.min(2000, Math.max(20, tnNum("tn_fbr") || 200)), dp = Math.min(30, Math.max(0, tnNum("tn_dp") || 0)), dh = Math.min(250, Math.max(20, tnNum("tn_dh") || 80));
+    cmds.push(`${m},FRICB,${tnEl("tn_fbs").value},${fbr}`, `${m},DITHER,${dp},${dh}`);
   }
   tnEl("tnCmd").textContent = cmds.join("\n");
 }
@@ -1677,6 +1685,7 @@ fmInfo();
 
 /* ---------- Calibración de gravedad acoplada fémur + tibia ---------- */
 var GC_KEY = "pata_gravcal_v1";
+var GC_A = 0.12, GC_V = 0.15, GC_HALF = 0.07, GC_MIN_N = 5; // pasadas: ±amplitud (rad), velocidad (rad/s), tramo medido, muestras mínimas
 var GRAVCAL = null;
 try { GRAVCAL = JSON.parse(localStorage.getItem(GC_KEY) || "null"); } catch (e) { GRAVCAL = null; }
 // Comandos de gravedad calibrada para el motor i (null si no hay calibración para él).
@@ -1695,21 +1704,41 @@ function gcFit2(xs, ys) { // y ≈ a cos x + b sin x  ->  A cos(x + φ)
   const mean = ys.reduce((q, y) => q + y, 0) / ys.length, tot = ys.reduce((q, y) => q + (y - mean) ** 2, 0);
   return { A: Math.hypot(a, b), phi: Math.atan2(-b, a), rms, r2: tot > 0 ? 1 - rms * rms * ys.length / tot : 0, fit };
 }
-async function gcHold(target) { // lleva fémur y tibia a target=[f,t] y espera quietas en el objetivo
+async function gcHold(target, timeout = 6000) { // lleva fémur y tibia a target=[f,t] (±0.03 rad, casi quietas)
   await wsCmd(1, `PREF,${target[0].toFixed(4)}`); await wsCmd(2, `PREF,${target[1].toFixed(4)}`);
-  let since = null;
   return wsWait(() => {
-    const a = state[1].last, b = state[2].last, now = performance.now();
-    const ok = Math.abs(a.pos - target[0]) < 0.012 && Math.abs(b.pos - target[1]) < 0.012 && Math.abs(a.spd) < 0.05 && Math.abs(b.spd) < 0.05;
-    if (!ok) { since = null; return false; } if (since === null) since = now; return now - since > 400;
-  }, 6000);
+    const a = state[1].last, b = state[2].last;
+    return Math.abs(a.pos - target[0]) < 0.03 && Math.abs(b.pos - target[1]) < 0.03 && Math.abs(a.spd) < 0.15 && Math.abs(b.spd) < 0.15;
+  }, timeout);
+}
+/* Pasada lenta de M(i) hasta `to`. Promedia la corriente con signo solo mientras
+ * se mueve en el sentido pedido por el tramo central (|θ − center| < half), sin
+ * empujón de arranque activo. Parada, el firmware entrega solo la corriente del
+ * modelo (HOLD) o la del empujón: por eso se mide en movimiento. */
+async function gcPass(i, to, center, half) {
+  const d = Math.sign(to - state[i].last.pos) || 1;
+  await wsCmd(i, `PREF,${to.toFixed(4)}`);
+  const acc = { I: 0, f: 0, t: 0, n: 0 }; let lastT = null;
+  await wsWait(() => {
+    const smp = samples[samples.length - 1];
+    if (smp && smp.t !== lastT) {
+      lastT = smp.t;
+      const s = smp.m[i];
+      if (Math.abs(s.pos - center) < half && s.spd * d > 0.05 && !(s.flags & 64) && isFinite(s.cur)) {
+        acc.I += (s.duty < 0 ? -1 : 1) * s.cur; acc.f += smp.m[1].pos; acc.t += smp.m[2].pos; acc.n++;
+      }
+      return Math.abs(s.pos - to) < 0.03 && Math.abs(s.spd) < 0.15;
+    }
+    return false;
+  }, 8000);
+  return acc.n ? { I: acc.I / acc.n, f: acc.f / acc.n, t: acc.t / acc.n, n: acc.n } : { n: 0 };
 }
 async function gcRun() {
   if (AT.running) return;
   const out = (t) => wsOut(t);
   if (!connected) { tnEl("wsOut").textContent = "Conecta primero el ESP32.\n"; return; }
   const [fl, fh] = wsRange(1), [tl, th] = wsRange(2);
-  tnEl("wsOut").textContent = `Calibración de gravedad ${new Date().toLocaleString()}\n`;
+  tnEl("wsOut").textContent = `Calibración de gravedad v5 (en movimiento, tibia sin gravedad) ${new Date().toLocaleString()}\n`;
   AT.running = true; AT.abort = null; AT.emergency = false; AT.min = -1e9; AT.max = 1e9;
   WS.hc = [0, 0, 0]; WS.start = [0, 1, 2].map((i) => state[i].last ? state[i].last.pos : 0);
   tnEl("gcStart").disabled = true;
@@ -1718,55 +1747,73 @@ async function gcRun() {
     for (let i = 0; i < 3; i++) {
       tnEl("tnMotor").value = String(i); tnLoadIdent(); tnEl("tnComp").checked = true; tnRun();
       await wsCmd(i, "STOP");
-      for (const c of tnEl("tnCmd").textContent.split("\n")) if (!/,FMAP,|,GRAV/.test(c)) await wsCmd(i, c.replace(/^M\d,/, ""));
-      // Sin gravedad ni mapa: el lazo (tolerancia mínima, siempre activo) da la corriente real de sostén.
-      await wsCmd(i, "GRAV,0,0"); await wsCmd(i, "GRAV2,0,0,0,0"); await wsCmd(i, "FMAP,CLEAR");
-      await wsCmd(i, "HOLD,BRAKE"); await wsCmd(i, "LIMIT,0,100"); await wsCmd(i, "PLIMIT,0.6,4,0.0023");
+      // La gravedad actual queda activa: sostiene el fémur (sin ella el firmware lo suelta y cae).
+      // No sesga la medida: se lee la corriente real en movimiento, no la del modelo.
+      for (const c of tnEl("tnCmd").textContent.split("\n")) if (!/,FMAP,|,DITHER/.test(c)) await wsCmd(i, c.replace(/^M\d,/, ""));
+      // La tibia va sin gravedad: su modelo viejo (sin acoplar al fémur) tiene el signo cambiado en
+      // las esquinas y la empuja hacia abajo. El freno la sostiene sola; el fémur sí necesita la suya.
+      if (i === 2) { await wsCmd(i, "GRAV,0,0"); await wsCmd(i, "GRAV2,0,0,0,0"); }
+      await wsCmd(i, "FMAP,CLEAR"); await wsCmd(i, "DITHER,0,80");
+      await wsCmd(i, "HOLD,BRAKE"); await wsCmd(i, "LIMIT,0,100"); await wsCmd(i, i === 0 ? "PLIMIT,0.6,4,0.01" : `PLIMIT,${GC_V},4,0.01`);
       let ok = false;
       for (let k = 0; k < 3 && !ok; k++) { await wsWait(null, 300); await wsCmd(i, `PREF,${state[i].last.pos.toFixed(4)}`); ok = (await wsCmd(i, "MODE,POSITION")).includes("ACK"); }
       if (!ok) throw new AtAbort(`no pude activar Posición en M${i + 1}`);
     }
-    delete FMAPS[1]; delete FMAPS[2]; fmSave(); fmInfo();
+    // Comprueba en la línea CFG del ESP32 que la tibia quedó sin gravedad (llega ~3 veces por segundo).
+    await wsWait(null, 1200);
+    const g3 = state[2].cfg ? state[2].cfg.grav : NaN;
+    if (isFinite(g3) && g3 !== 0) throw new AtAbort(`la tibia sigue con gravedad en el ESP32 (GRAV ${g3}); no calibro`);
+    out(`ESP32: tibia sin gravedad ${isFinite(g3) ? "(confirmado en CFG)" : "(sin línea CFG para confirmarlo)"}.`);    delete FMAPS[1]; delete FMAPS[2]; fmSave(); fmInfo();
     await wsGo(0, 0);
     const lin = (a, b, n) => Array.from({ length: n }, (_, k) => a + (b - a) * k / (n - 1));
     const F = lin(fl + 0.15, fh - 0.15, 5), T = lin(tl + 0.15, th - 0.15, 5);
-    const pts = [];
-    out(`Grilla fémur ${F.map((x) => x.toFixed(2)).join(" ")} × tibia ${T.map((x) => x.toFixed(2)).join(" ")} (desde abajo y desde arriba).`);
+    // Puntos de partida de cada pasada, siempre 0.05 rad dentro del rango.
+    const cF = (x) => Math.min(fh - 0.05, Math.max(fl + 0.05, x)), cT = (x) => Math.min(th - 0.05, Math.max(tl + 0.05, x));
+    const ptsF = [], ptsT = [], fr = (u, dn) => (u.I - dn.I) / 2;
+    out(`Grilla fémur ${F.map((x) => x.toFixed(2)).join(" ")} × tibia ${T.map((x) => x.toFixed(2)).join(" ")}.`);
+    out(`En cada postura cada articulación sube y baja ±${GC_A} rad a ${GC_V} rad/s; gravedad = promedio de las dos pasadas.`);
     for (let a = 0; a < F.length; a++) {
       const Tord = a % 2 ? [...T].reverse() : T;
       for (const t of Tord) {
-        const f = F[a], rec = { If: [], It: [], pf: [], pt: [] };
-        for (const side of [-1, 1]) {
-          await gcHold([f + side * 0.12, t + side * 0.12]);
-          const okHold = await gcHold([f, t]);
-          if (!okHold) { out(`   (${f.toFixed(2)}, ${t.toFixed(2)}) no se quedó quieta; la salto`); continue; }
-          let sf = 0, st = 0, n = 0;
-          const t0 = performance.now();
-          await wsWait(() => { const A = state[1].last, B = state[2].last;
-            sf += (A.duty < 0 ? -1 : 1) * (isFinite(A.cur) ? A.cur : 0); st += (B.duty < 0 ? -1 : 1) * (isFinite(B.cur) ? B.cur : 0); n++;
-            return performance.now() - t0 > 600; }, 1000);
-          rec.If.push(sf / n); rec.It.push(st / n); rec.pf.push(state[1].last.pos); rec.pt.push(state[2].last.pos);
-        }
-        if (rec.If.length === 2) {
-          const mean = (v) => (v[0] + v[1]) / 2;
-          const P = { f: mean(rec.pf), t: mean(rec.pt), If: mean(rec.If), It: mean(rec.It), dIt: Math.abs(rec.It[0] - rec.It[1]) / 2 };
-          pts.push(P);
-          out(`   fémur ${P.f.toFixed(2)} tibia ${P.t.toFixed(2)}: sostén fémur ${P.If.toFixed(3)} A, tibia ${P.It.toFixed(3)} A (± fricción ${P.dIt.toFixed(3)})`);
-        }
+        const f = F[a], tag = `(${f.toFixed(2)}, ${t.toFixed(2)})`;
+        let msg = `   fémur ${f.toFixed(2)} tibia ${t.toFixed(2)}:`;
+        // Fémur: pasada hacia + y hacia −, con la tibia sostenida en t.
+        await gcHold([cF(f - GC_A), t]);
+        const fu = await gcPass(1, cF(f + GC_A), f, GC_HALF), fd = await gcPass(1, cF(f - GC_A), f, GC_HALF);
+        if (fu.n >= GC_MIN_N && fd.n >= GC_MIN_N) {
+          const P = { f: (fu.f + fd.f) / 2, t: (fu.t + fd.t) / 2, I: (fu.I + fd.I) / 2, fric: fr(fu, fd) };
+          ptsF.push(P); msg += ` gravedad fémur ${P.I.toFixed(3)} A (fricción ${P.fric.toFixed(3)})`;
+        } else msg += ` fémur sin datos (${fu.n || 0}/${fd.n || 0} muestras en movimiento)`;
+        // Tibia: pasada hacia + y hacia −, con el fémur sostenido en f.
+        await gcHold([f, cT(t - GC_A)]);
+        const tu = await gcPass(2, cT(t + GC_A), t, GC_HALF), td = await gcPass(2, cT(t - GC_A), t, GC_HALF);
+        if (tu.n >= GC_MIN_N && td.n >= GC_MIN_N) {
+          const P = { f: (tu.f + td.f) / 2, t: (tu.t + td.t) / 2, I: (tu.I + td.I) / 2, fric: fr(tu, td) };
+          ptsT.push(P); msg += ` · tibia ${P.I.toFixed(3)} A (fricción ${P.fric.toFixed(3)})`;
+        } else msg += ` · tibia sin datos (${tu.n || 0}/${td.n || 0})`;
+        out(msg);
+        if (!(fu.n || fd.n || tu.n || td.n)) out(`   ${tag}: no se movió en ninguna pasada`);
       }
     }
-    if (pts.length < 8) throw new AtAbort("muy pocas posturas válidas para ajustar");
+    if (ptsT.length < 8 || ptsF.length < 8) throw new AtAbort(`muy pocas posturas válidas para ajustar (fémur ${ptsF.length}, tibia ${ptsT.length}; hacen falta 8)`);
     // Tibia: A cos(θt + s θf + φ); se elige el signo s que mejor explica los datos.
-    const fits = [1, -1, 0].map((sg) => ({ s: sg, ...gcFit2(pts.map((p) => p.t + sg * p.f), pts.map((p) => p.It)) }));
+    const fits = [1, -1, 0].map((sg) => ({ s: sg, ...gcFit2(ptsT.map((p) => p.t + sg * p.f), ptsT.map((p) => p.I)) }));
     fits.forEach((q) => out(`   tibia con s=${q.s >= 0 ? "+" : ""}${q.s}: G=${q.A.toFixed(4)} A, φ=${q.phi.toFixed(3)}, R²=${q.r2.toFixed(3)}, error ${q.rms.toFixed(4)} A`));
     const best = fits.slice(0, 2).sort((x, y) => x.rms - y.rms)[0];
-    // Fémur: B cos(θf + φ1) + (la misma tibia)
-    const resid = pts.map((p, k) => p.If - best.fit[k]);
-    const ff = gcFit2(pts.map((p) => p.f), resid);
-    const yF = pts.map((p) => p.If), mF = yF.reduce((q, y) => q + y, 0) / yF.length;
-    const r2F = 1 - pts.reduce((q, p, k) => q + (p.If - (best.fit[k] + ff.fit[k])) ** 2, 0) / Math.max(1e-12, yF.reduce((q, y) => q + (y - mF) ** 2, 0));
+    // Fémur: B cos(θf + φ1) + (la misma tibia, evaluada en las posturas de las pasadas del fémur)
+    const tibF = ptsF.map((p) => best.A * Math.cos(p.t + best.s * p.f + best.phi));
+    const resid = ptsF.map((p, k) => p.I - tibF[k]);
+    const ff = gcFit2(ptsF.map((p) => p.f), resid);
+    const yF = ptsF.map((p) => p.I), mF = yF.reduce((q, y) => q + y, 0) / yF.length;
+    const r2F = 1 - ptsF.reduce((q, p, k) => q + (p.I - (tibF[k] + ff.fit[k])) ** 2, 0) / Math.max(1e-12, yF.reduce((q, y) => q + (y - mF) ** 2, 0));
+    const fricMean = (v) => v.reduce((q, p) => q + p.fric, 0) / v.length;
+    out(`   fricción media en movimiento: fémur ${fricMean(ptsF).toFixed(3)} A, tibia ${fricMean(ptsT).toFixed(3)} A`);
     out(`   fémur: G propio=${ff.A.toFixed(4)} A, φ1=${ff.phi.toFixed(3)} + término de la tibia → R²=${r2F.toFixed(3)}`);
-    GRAVCAL = { s: best.s, A: best.A, phi: best.phi, B: ff.A, phi1: ff.phi, r2t: best.r2, r2f: r2F, date: new Date().toISOString() };
+    if (!(best.r2 >= 0.5 && r2F >= 0.5)) {
+      for (const i of [1, 2]) await wsCmd(i, "PLIMIT,0.6,4,0.01");
+      throw new AtAbort(`ajuste poco confiable (R² tibia ${best.r2.toFixed(2)}, fémur ${r2F.toFixed(2)} < 0.5): no lo aplico, queda la gravedad anterior`);
+    }
+    GRAVCAL ={ s: best.s, A: best.A, phi: best.phi, B: ff.A, phi1: ff.phi, r2t: best.r2, r2f: r2F, date: new Date().toISOString() };
     try { localStorage.setItem(GC_KEY, JSON.stringify(GRAVCAL)); } catch (e) {}
     for (const i of [1, 2]) for (const c of gcCommands(i)) await wsCmd(i, c.replace(/^M\d,/, ""));
     for (const i of [1, 2]) await wsCmd(i, "PLIMIT,0.6,4,0.01");
