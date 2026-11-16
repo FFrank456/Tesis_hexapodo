@@ -2,8 +2,8 @@
 tipo: componente-tecnico
 area: mecanica
 unidad: Unidad 2
-fecha: 2026-11-13
-version: v2
+fecha: 2026-11-14
+version: v3
 archivo_cad: ROBOT_ESAMBLE_alfred Copy (Fusion, Tesis hexápodo › Preparaciones_to_ROS2)
 estado: en-diseño
 tags:
@@ -54,8 +54,16 @@ Archivo Fusion **ROBOT_ESAMBLE_alfred Copy**. Contiene la pata 1 (coxa_link_1, f
 - **Unión con el macho `inf_articulacion`:** es una U cerrada. La parte amarilla `tibia_link_base_A` rodea el macho por los cuatro lados con tapas de 2 mm y 0,2 mm de holgura.
   - Las 4 ranuras de tuerca del macho son pasantes, así que las tuercas se colocan antes de ensamblar.
   - El cuello del macho tiene una ventana de aligeramiento, que reduce el volumen un 15 %.
-- **Forma en arco con 2 tramos rectos:** 25 mm a 9° y 25 mm a 27°, con el quiebre redondeado. Cada tramo tiene una ventana pasante. Sección de 19,4 × 10,2 mm.
-- **Pie (`soporte_tibia_A`):** queda encajado en la punta. El alcance de J2 al apoyo es de 114,6 mm, con el pie 31,6 mm por debajo del eje de J2.
+- **Forma tipo tarántula en tramos rectos (v3):** el giro total es de 60°, repartido en dos rodillas de 30° redondeadas con R5. La sección es de 15 × 10 mm.
+  - **Tramo 1:** recto hasta 63 mm del eje de J2, con un agujero de aligeramiento de Ø10.
+  - **Tramo 2:** 30 mm a −30°, con una ranura de 10 × 18,5 mm.
+  - **Tramo 3:** 15 mm a −60°.
+  - **Comprobación:** al girar J2 de −120° a +120° no choca con el fémur.
+- **Pie (`soporte_tibia_A`):** casco ovalado de 27 × 23 × 19,5 mm que se calza sobre la punta.
+  - Se fija con un M3 × 22 transversal, con alojamiento para la cabeza y hexágono para la tuerca.
+  - El centro de la punta queda a 96 mm hacia adelante y 27 mm hacia abajo de J2.
+  - Se recomienda imprimirlo en TPU, o en PETG con 0,2 mm de holgura.
+- **Pernos de la U:** 2 M3 con la cabeza en la tapa superior (alojamiento de Ø5,8 × 1,8 mm) y la tuerca hexagonal en la tapa inferior (5,7 mm entre caras, 1,8 mm de profundidad).
 
 ## Juntas (Fusion)
 | Junta | Tipo | Eje |
@@ -79,7 +87,24 @@ Las juntas antiguas (`join_femur_1` y `join_tibia_1`) giraban sobre un eje despl
 - **Barrido de colisiones:** J1 y J2 giran libres en ±90° (J2 hasta ±120° con la tibia en arco). J0 gira libre en ±90°; a ±105° la coxa roza el soporte del motor, así que se recomienda limitar J0 a ±90°.
 - **Superposiciones fijas corregidas:** el anillo y la copa del fémur ahora son un solo cuerpo, y las bridas de J1 y J2 tienen su rebaje en la copa.
 
+## Cambios del 14-nov (tarde)
+- **Diámetro de las juntas:** todas las piezas redondas que rodean un acople bajaron a Ø22, el diámetro de la brida.
+  - Son las copas y aros de J1 y J2, `soporte_J1_buje`, `soporte_J2_buje` y los aros de `brazo_J0`.
+  - En `brazo_J0` se mantiene la unión aro–brazo con 9 mm de ancho, y se rellenó la canaleta de la cara interior del brazo.
+- **Agujeros de las bridas:** en `brazo_J0` (J0) y en `inf_articulacion` (J2) se alinearon con la brida. Antes estaban desfasados 20° y 24,3°.
+- **Unión `brazo_J0` ↔ `sup_articulacion`:** los 2 pernos M3 quedan a 21,2 y 30,3 mm del eje de J0. La cabeza va arriba (Ø5,8 × 3 mm) y la tuerca hexagonal abajo (2,4 mm).
+- **Fémur dividido:** `femur_tapa_J1` (copa de J1 + franja de 7 mm) se une a `femur_link` con un M3 × 12. Tiene la cabeza en la cara exterior (Ø5,8 × 3) y la tuerca en una ranura pasante en la mitad de la placa.
+- **Alojamientos de cabeza Ø5,8 × 3 mm:** en `femur_tapa_J1` y en `inf_articulacion` (en el perno hacia el macho).
+- **Ranuras de tuerca:**
+  - `inf_articulacion (1)`: ranura de 5,8 × 2,6 mm para el perno de J2.
+  - `inf_articulacion`: agujeros del acople J2 de Ø3,2 con alojamiento de Ø6,2 × 3 mm.
+- **`soporte_J0_chasis`:** separado otra vez de la carcasa del motor J0 (`J0_Cuerpo4`).
+- **Aligeramiento del fémur:** 4 agujeros de Ø8 en la placa central de `femur_link`, que bajan su volumen de 10 701 a 8 891 mm³.
+  - El resto de piezas no tiene zonas macizas con al menos 2,5 mm de pared hasta los agujeros, ranuras o alojamientos cercanos.
+
 ## Pendientes
+- Revisar `Empalme13` y `Empalme14` de la tibia, que se hicieron sobre la barra anterior.
+- Recrear `join_femur_1_J1` y `join_tibia_1_J2`; en el modelo solo queda `join_coxa_1_J0`.
 - Mover los 2 agujeros del este de `Tapa_PETG` a x = 81,27.
 - Aplicar límites de ±90° a las tres juntas.
 - Errores antiguos en el historial: `Ajuste_soporte_chasis`, `Ajuste_soporte_chasis_rect`, `Quitar_brazo_interior`, `Boceto39–41` y `Dividir1`.
