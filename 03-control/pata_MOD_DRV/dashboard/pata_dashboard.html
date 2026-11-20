@@ -80,11 +80,6 @@ canvas { width: 100%; display: block; background: var(--panel2); border-radius: 
 <header>
   <h1><span id="boardTitle">Pata MOD_DRV</span> <span class="sub">Coxa · Fémur · Tibia · ESP32 cascada</span></h1>
   <button id="connect" class="primary">Conectar</button>
-  <select id="chartVar" title="Variable del gráfico principal">
-    <option value="pos">Posición (rad)</option>
-    <option value="spd">Velocidad (rad/s)</option>
-    <option value="cur">Corriente CS (A)</option>
-  </select>
   <select id="window">
     <option value="5">5 s</option><option value="10">10 s</option>
     <option value="20" selected>20 s</option><option value="60">60 s</option>
@@ -93,6 +88,8 @@ canvas { width: 100%; display: block; background: var(--panel2); border-radius: 
   <button id="diag" title="Diagnóstico del ADC y encoders">Diagnóstico</button>
   <button id="rec">Grabar</button>
   <button id="csv">Exportar CSV</button>
+  <button id="pauseCharts" title="Congela las gráficas para mirarlas; la telemetría y la grabación siguen">Pausar gráficas</button>
+  <button id="resetEsp" title="Reinicia el ESP32 (línea EN por RTS). Se pierden las ganancias que no estén en el firmware">Reset ESP32</button>
   <button id="stopAll" class="stop" title="Barra espaciadora">STOP TODO</button>
   <div class="status" id="status">Desconectado</div>
 </header>
@@ -130,7 +127,7 @@ canvas { width: 100%; display: block; background: var(--panel2); border-radius: 
       Las mismas cuentas, comparadas con las ganancias actuales del ESP32.</div>
     <div class="row" style="align-items:end">
       <label class="atl">Articulación<select id="tnMotor"><option value="0">M1 Coxa</option><option value="1" selected>M2 Fémur</option><option value="2">M3 Tibia</option></select></label>
-      <button id="tnIdent" title="Parámetros identificados con MATLAB (11-nov)">Planta identificada</button>
+      <button id="tnIdent" title="Parámetros identificados con MATLAB (pata modificada, 19-nov)">Planta identificada</button>
       <button id="tnRead" title="Copia las ganancias que reporta el ESP32 (CFG) a 'Actuales'">Leer ganancias del ESP32</button>
       <button id="tnFast" title="Pone cada ts en 1.15× el mínimo alcanzable">Lo más rápido factible</button>
     </div>
@@ -292,7 +289,7 @@ MOTORS.forEach((m, i) => {
     <div class="val"><div class="k">Corriente</div><div class="v" id="cur${i}">—</div></div>
     <div class="val"><div class="k">PWM</div><div class="v" id="pwm${i}">—</div></div>
   </div>
-  <div class="legend"><span style="color:var(${m.color})">medida</span><span style="color:var(--ref)">referencia</span>
+  <div class="legend"><span style="color:var(${m.color})">medida</span><span id="chartRef${i}" style="color:var(--ref)">referencia</span>
     <span class="x" id="extra${i}" style="margin-left:auto"></span></div>
   <canvas id="chart${i}" height="150"></canvas>
   <canvas id="pwmchart${i}" height="54" style="margin-top:4px"></canvas>
@@ -360,9 +357,13 @@ const num = (id) => { const v = parseFloat(document.getElementById(id).value); r
 const fmt = (x, d) => (x === null || !isFinite(x)) ? "—" : x.toFixed(d);
 const P = (i) => `M${i + 1},`;
 const mode = (i) => state[i].last ? state[i].last.mode : 0;
+// Las gráficas solo se congelan con el botón "Pausar gráficas"; STOP ya no las detiene.
+let chartsPaused = false;
 
 const actions = {
-  stop: (i) => send(P(i) + "STOP"),
+   stop: (i) => {
+    send(P(i) + "STOP");
+  },
   zero: (i) => {
     if (mode(i) !== 0) { log(`UI: M${i + 1} en STOP antes de poner cero`, "err"); return; }
     send(P(i) + "ENCODER,ZERO");
@@ -514,6 +515,15 @@ function handleT(line) {
   const f = line.split(",");
   if (f.length < 3 + FIELDS_PER_MOTOR * MOTORS.length) return;
   const t = parseInt(f[1], 10) / 1000;
+  // El reloj del ESP32 volvió atrás: se reinició (botón Reset, EN o caída de tensión).
+  // Se vacía el historial para que las gráficas no mezclen las dos bases de tiempo.
+  if (samples.length && t < samples[samples.length - 1].t - 0.5) {
+    samples = []; chartFrames.fill(null);
+    log(resetPending ? "UI: ESP32 reiniciado" : "UI: el ESP32 se reinició solo (¿caída de tensión?)", resetPending ? "ack" : "err");
+    resetPending = 0;
+  } else if (resetPending && !samples.length && t < resetFromT - 0.5) {
+    log("UI: ESP32 reiniciado", "ack"); resetPending = 0;
+  }
   const sample = { t, m: [] };
   for (let i = 0; i < MOTORS.length; i++) {
     const b = 3 + i * FIELDS_PER_MOTOR, n = (k) => parseFloat(f[b + k]);
@@ -588,7 +598,7 @@ function drawChart(canvas, series, opts) {
   const ctx = canvas.getContext("2d");
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, w, h);
-  const L = 44, R = 6, T = 6, B = 14;
+  const L = 72, R = 6, T = 6, B = 24;
   let lo = Infinity, hi = -Infinity;
   series.forEach(s => s.data.forEach(p => { if (isFinite(p[1])) { lo = Math.min(lo, p[1]); hi = Math.max(hi, p[1]); } }));
   if (opts.fixed) { lo = opts.fixed[0]; hi = opts.fixed[1]; }
@@ -603,8 +613,19 @@ function drawChart(canvas, series, opts) {
   for (let k = 0; k <= 3; k++) {
     const v = lo + (hi - lo) * k / 3, y = Y(v);
     ctx.beginPath(); ctx.moveTo(L, y); ctx.lineTo(w - R, y); ctx.stroke();
-    ctx.fillText(v.toFixed(Math.abs(hi - lo) < 2 ? 3 : 1), L - 4, y);
+    ctx.fillText(v.toFixed(Math.abs(hi - lo) < 2 ? 3 : 1) + " " + opts.unit, L - 4, y);
   }
+
+  ctx.textAlign = "center";
+  ctx.textBaseline = "bottom";
+  for (let k = 0; k <= 4; k++) {
+    const t = t0 + opts.span * k / 4;
+    const label = `${t.toFixed(1)} s`;
+    const textWidth = ctx.measureText(label).width;
+    const x = Math.max(textWidth / 2, Math.min(w - textWidth / 2, X(t)));
+    ctx.fillText(label, x, h - 2);
+  }
+
   if (lo < 0 && hi > 0) { ctx.strokeStyle = css("--muted"); ctx.beginPath(); ctx.moveTo(L, Y(0)); ctx.lineTo(w - R, Y(0)); ctx.stroke(); }
   series.forEach(s => {
     ctx.strokeStyle = s.color; ctx.lineWidth = s.width || 1.6; ctx.beginPath();
@@ -619,7 +640,14 @@ function drawChart(canvas, series, opts) {
   });
 }
 
-const chartVar = document.getElementById("chartVar"), windowSel = document.getElementById("window");
+const windowSel = document.getElementById("window");
+const chartFrames = MOTORS.map(() => null);
+const chartSignals = {
+  pos: { meas: "pos", ref: "posRef", unit: "rad", minSpan: 0.2 },
+  spd: { meas: "spd", ref: "spdRef", unit: "rad/s", minSpan: 1 },
+  cur: { meas: "cur", ref: "curRef", unit: "A", minSpan: 0.05 },
+  open: { meas: "duty", unit: "%", minSpan: 1 },
+};
 function render() {
   const now = samples.length ? samples[samples.length - 1].t : 0;
   const span = +windowSel.value;
@@ -627,25 +655,28 @@ function render() {
   const view = samples.slice(start);
   const step = Math.max(1, Math.floor(view.length / 900));
   const pts = view.filter((_, k) => k % step === 0 || k === view.length - 1);
-  const v = chartVar.value;
+  const liveFrame = { pts, t1: now, span };
   MOTORS.forEach((m, i) => {
     const color = css(m.color), s = state[i].last;
-    let meas, ref, minSpan;
-    if (v === "pos") { meas = "pos"; ref = "posRef"; minSpan = 0.2; }
-    else if (v === "spd") { meas = "spd"; ref = "spdRef"; minSpan = 1; }
-    else { meas = "cur"; ref = "curRef"; minSpan = 0.05; }
-    const refData = pts.map(p => {
-      const q = p.m[i];
-      const active = v === "pos" ? (q.mode === 3 || (q.flags & 1)) : v === "spd" ? (q.mode >= 2) : (q.mode >= 1);
-      return [p.t, active ? q[ref] : NaN];
-    });
-    drawChart(document.getElementById("chart" + i), [
-      { data: refData, color: css("--ref"), width: 1.4 },
-      { data: pts.map(p => [p.t, p.m[i][meas]]), color },
-    ], { t1: now, span, minSpan });
+    const v = state[i].tab;
+    const { meas, ref, unit, minSpan } = chartSignals[v];
+    if (!chartsPaused || !chartFrames[i]) chartFrames[i] = liveFrame;
+    const frame = chartFrames[i];
+    const chartSeries = [{ data: frame.pts.map(p => [p.t, p.m[i][meas]]), color }];
+    if (ref) {
+      const refData = frame.pts.map(p => {
+        const q = p.m[i];
+        const active = v === "pos" ? (q.mode === 3 || (q.flags & 1)) : v === "spd" ? (q.mode >= 2) : (q.mode >= 1);
+        return [p.t, active ? q[ref] : NaN];
+      });
+      chartSeries.unshift({ data: refData, color: css("--ref"), width: 1.4 });
+    }
+    document.getElementById("chartRef" + i).hidden = !ref;
+    drawChart(document.getElementById("chart" + i), chartSeries,
+      { t1: frame.t1, span: frame.span, minSpan, unit });
     drawChart(document.getElementById("pwmchart" + i), [
-      { data: pts.map(p => [p.t, p.m[i].duty]), color: css("--muted"), width: 1.2 },
-    ], { t1: now, span, fixed: [-100, 100] });
+      { data: frame.pts.map(p => [p.t, p.m[i].duty]), color: css("--muted"), width: 1.2 },
+    ], { t1: frame.t1, span: frame.span, fixed: [-100, 100], unit: "%" });
     if (s) {
       document.getElementById("pos" + i).textContent = fmt(s.pos, 3) + " rad";
       document.getElementById("spd" + i).textContent = fmt(s.spd, 2);
@@ -659,7 +690,7 @@ function render() {
       md.style.background = (s.flags & 8) ? "#6b1f25" : "";
       md.classList.toggle("on", s.mode !== 0);
       document.getElementById("extra" + i).textContent =
-        (v === "pos" ? `ref ${fmt(s.posRef, 3)} rad` : v === "spd" ? `ref ${fmt(s.spdRef, 2)} rad/s` : `ref ${fmt(s.curRef, 3)} A`) +
+        (v === "pos" ? `ref ${fmt(s.posRef, 3)} rad` : v === "spd" ? `ref ${fmt(s.spdRef, 2)} rad/s` : v === "cur" ? `ref ${fmt(s.curRef, 3)} A` : "") +
         ((s.flags & 2) ? "" : " · encoder sin velocidad");
     }
   });
@@ -674,8 +705,46 @@ requestAnimationFrame(render);
 
 /* ---------- Global buttons ---------- */
 document.getElementById("connect").onclick = connect;
-document.getElementById("stopAll").onclick = () => { send("STOP"); if (AT.running) AT.abort = "STOP TODO"; };
-document.getElementById("diag").onclick = () => send("DIAG");
+document.getElementById("stopAll").onclick = () => {
+  send("STOP");
+  if (AT.running) AT.abort = "STOP TODO";
+};
+const pauseBtn = document.getElementById("pauseCharts");
+function setChartsPaused(p) {
+  chartsPaused = p;
+  pauseBtn.textContent = p ? "Reanudar gráficas" : "Pausar gráficas";
+  pauseBtn.classList.toggle("primary", p);
+}
+pauseBtn.onclick = () => setChartsPaused(!chartsPaused);
+
+/* Reset del ESP32 por las líneas del puerto serie (como esptool): RTS baja EN y DTR
+   queda en reposo para que GPIO0 arranque la aplicación y no el bootloader. */
+let resetPending = 0, resetFromT = Infinity;
+async function resetEsp() {
+  if (!connected || !port) return log("UI: conecta el ESP32 antes de reiniciarlo", "err");
+  if (!confirm("¿Reiniciar el ESP32?\n\nLos motores se detienen y se pierden las ganancias y " +
+               "compensaciones enviadas desde el dashboard (viven en la RAM).")) return;
+  if (AT.running) AT.abort = "Reset ESP32";
+  try { await send("STOP"); } catch (e) {}
+  try {
+    await port.setSignals({ dataTerminalReady: false, requestToSend: true });
+    await new Promise(r => setTimeout(r, 150));
+    await port.setSignals({ dataTerminalReady: false, requestToSend: false });
+  } catch (e) { return log("UI: no se pudo mover RTS/DTR: " + e.message + ". Pulsa el botón EN de la placa.", "err"); }
+  resetFromT = samples.length ? samples[samples.length - 1].t : Infinity;
+  samples = []; chartFrames.fill(null);
+  state.forEach(s => { s.last = null; s.cfg = null; s.cfgFilled = false; });
+  resetPending = performance.now();
+  log("UI: reset enviado (RTS). Esperando al ESP32…", "info");
+  setTimeout(() => { if (connected) { send("TEL,MULTI"); send("INFO"); } }, 1500);
+  setTimeout(() => {
+    if (resetPending) {
+      resetPending = 0;
+      log("UI: no se detectó el reinicio. Si la placa no tiene auto-reset, pulsa su botón EN y vuelve a Conectar.", "err");
+    }
+  }, 4000);
+}
+document.getElementById("resetEsp").onclick = resetEsp;document.getElementById("diag").onclick = () => send("DIAG");
 document.getElementById("zeroAll").onclick = () => {
   if (state.some((s, i) => mode(i) !== 0)) { log("UI: STOP TODO antes de poner cero", "err"); return; }
   send("ALL,ENCODER,ZERO");
@@ -1194,13 +1263,30 @@ const TUNE = (() => {
 })();
 
 /* ---------- Sintonía por asignación de polos ---------- */
-// Identificación del 11-nov (CSV del ensayo automático, firmware pata_MOD_DRV, encoder 2800 cuentas/vuelta).
+// Pata modificada, identificación del 19-nov (docs/identificacion_pata_modificada_2026-11-19.md).
+// a, u0, ke, te: motor, del 11-nov. J, b, Ic, Is, G, th0: 19-nov. Cero en la pose del CAD
+// (fémur horizontal, tibia alineada); en fémur y tibia el encoder positivo baja la articulación.
+// Gravedad: ajuste de las 29 posturas válidas de la calibración v6 del 19-nov (22:33, cortada por
+// salir de rango): fémur R² 0.993, tibia R² 0.82. La identificación daba fémur 0.093/−3.05 (R² 0.87
+// con esos mismos puntos) y tibia 0.0179/π.
+// Tibia: G y th0 son los del término acoplado GRAV2 = G·cos(q_tibia + q_fémur + th0); con el
+// fémur horizontal (q_fémur = 0) es el mismo G·cos(q + th0) que usa la simulación del panel.
+// Fémur: GRAV propio (G, th0) más el peso de la tibia, el mismo término de la tibia acoplado a M3.
 const TN_IDENT = [
-  // Is: corriente de arranque vista en las pruebas de posición del 12-nov (descontando la gravedad).
-  { a: 0.00292, u0: 20, ke: 0.0049, te: 0.2, J: 0.00061, b: 0.00527, Ic: 0.0455, Is: 0.10, G: 0,      th0: 0,       ilim: 0.38 },
-  { a: 0.00268, u0: 20, ke: 0.0007, te: 0.2, J: 0.00154, b: 0.00582, Ic: 0.0407, Is: 0.11, G: 0.0932, th0: -2.7533, ilim: 0.30 },
-  { a: 0.00318, u0: 22, ke: 0.0046, te: 0.2, J: 0.00126, b: 0.01369, Ic: 0.0585, Is: 0.20, G: 0.0503, th0: -1.6809, ilim: 0.40 },
+  { a: 0.00292, u0: 20, ke: 0.0049, te: 0.2, J: 0.00131, b: 0,      Ic: 0.0483, Is: 0.121, G: 0,      th0: 0,      ilim: 0.38 },
+  // Fémur: Is identificado 0.036, pero el empujón llega como máximo a 2·Is y, al bajar, debe vencer el
+  // GRAV que el firmware resta (~0.09). Con 0.036 se quedaba pegado bajando hacia 0 (prueba 19-nov 22:14).
+  { a: 0.00268, u0: 20, ke: 0.0007, te: 0.2, J: 0.00164, b: 0.0059, Ic: 0.0123, Is: 0.070, G: 0.0785, th0: -3.123, ilim: 0.30 },
+  { a: 0.00318, u0: 22, ke: 0.0046, te: 0.2, J: 0.00105, b: 0,      Ic: 0.0104, Is: 0.033, G: 0.0133, th0: -3.019, ilim: 0.40 },
 ];
+// Sin calibración guardada: coxa con GRAV; fémur con GRAV propio + el término de la tibia (GRAV2 a M3);
+// tibia solo con GRAV2 acoplado al fémur.
+const tnGravFallback = (m, i, p) => {
+  const tb = TN_IDENT[2];
+  if (i === 2) return [`${m},GRAV,0,0`, `${m},GRAV2,${p.G.toFixed(4)},${p.th0.toFixed(4)},2,1`];
+  if (i === 1) return [`${m},GRAV,${p.G.toFixed(4)},${p.th0.toFixed(4)}`, `${m},GRAV2,${tb.G.toFixed(4)},${tb.th0.toFixed(4)},3,1`];
+  return [`${m},GRAV,${p.G.toFixed(4)},${p.th0.toFixed(4)}`, `${m},GRAV2,0,0,0,0`];
+};
 const TN_KEYS = ["a", "u0", "ke", "te", "J", "b", "Ic", "Is", "G", "th0", "ilim"];
 const tnEl = (id) => document.getElementById(id);
 const tnNum = (id) => num(id);
@@ -1326,7 +1412,7 @@ function tnRun() {
   const cmds = [`${m},PID,${g.kp_i.toFixed(3)},${g.ki_i.toFixed(1)},0`, `${m},SPI,${g.kp_w.toFixed(5)},${g.ki_w.toFixed(5)}`, `${m},PPI,${g.kp_p.toFixed(3)},${g.ki_p.toFixed(3)}`];
   if (tnEl("tnComp").checked) {
     const gc = gcCommands(+tnEl("tnMotor").value);
-    cmds.push(`${m},FRIC,0`, `${m},FRICI,${ffIc.toFixed(4)},${ffIs.toFixed(4)}`, ...(gc || [`${m},GRAV,${p.G.toFixed(4)},${p.th0.toFixed(4)}`]), `${m},ILIMIT,${ilim.toFixed(3)}`);
+    cmds.push(`${m},FRIC,0`, `${m},FRICI,${ffIc.toFixed(4)},${ffIs.toFixed(4)}`, ...(gc || tnGravFallback(m, +tnEl("tnMotor").value, p)), `${m},ILIMIT,${ilim.toFixed(3)}`);
     cmds.push(...fmapCommands(+tnEl("tnMotor").value));
     const fbr = Math.min(2000, Math.max(20, tnNum("tn_fbr") || 200)), dp = Math.min(30, Math.max(0, tnNum("tn_dp") || 0)), dh = Math.min(250, Math.max(20, tnNum("tn_dh") || 80));
     cmds.push(`${m},FRICB,${tnEl("tn_fbs").value},${fbr}`, `${m},DITHER,${dp},${dh}`);
@@ -1684,7 +1770,8 @@ tnEl("fmClear").onclick = async () => {
 fmInfo();
 
 /* ---------- Calibración de gravedad acoplada fémur + tibia ---------- */
-var GC_KEY = "pata_gravcal_v1";
+// v2: pata modificada (19-nov). Las calibraciones de la pata vieja (v1) no valen y se ignoran.
+var GC_KEY = "pata_gravcal_v2";
 var GC_A = 0.12, GC_V = 0.15, GC_HALF = 0.07, GC_MIN_N = 5; // pasadas: ±amplitud (rad), velocidad (rad/s), tramo medido, muestras mínimas
 var GRAVCAL = null;
 try { GRAVCAL = JSON.parse(localStorage.getItem(GC_KEY) || "null"); } catch (e) { GRAVCAL = null; }
@@ -1704,7 +1791,13 @@ function gcFit2(xs, ys) { // y ≈ a cos x + b sin x  ->  A cos(x + φ)
   const mean = ys.reduce((q, y) => q + y, 0) / ys.length, tot = ys.reduce((q, y) => q + (y - mean) ** 2, 0);
   return { A: Math.hypot(a, b), phi: Math.atan2(-b, a), rms, r2: tot > 0 ? 1 - rms * rms * ys.length / tot : 0, fit };
 }
-async function gcHold(target, timeout = 6000) { // lleva fémur y tibia a target=[f,t] (±0.03 rad, casi quietas)
+async function gcHold(target, timeout) { // lleva fémur y tibia a target=[f,t] (±0.03 rad, casi quietas)
+  // El tiempo de espera crece con la distancia: a GC_V = 0.15 rad/s, 0.9 rad son 6 s. Con 6 s fijos
+  // las pasadas empezaban lejos del centro y quedaban "sin datos" (calibración del 19-nov).
+  if (timeout === undefined) {
+    const d = Math.max(Math.abs(state[1].last.pos - target[0]), Math.abs(state[2].last.pos - target[1]));
+    timeout = 3000 + 1500 * d / GC_V;
+  }
   await wsCmd(1, `PREF,${target[0].toFixed(4)}`); await wsCmd(2, `PREF,${target[1].toFixed(4)}`);
   return wsWait(() => {
     const a = state[1].last, b = state[2].last;
@@ -1738,7 +1831,7 @@ async function gcRun() {
   const out = (t) => wsOut(t);
   if (!connected) { tnEl("wsOut").textContent = "Conecta primero el ESP32.\n"; return; }
   const [fl, fh] = wsRange(1), [tl, th] = wsRange(2);
-  tnEl("wsOut").textContent = `Calibración de gravedad v5 (en movimiento, tibia sin gravedad) ${new Date().toLocaleString()}\n`;
+  tnEl("wsOut").textContent = `Calibración de gravedad v6 (pata modificada, en movimiento, tibia con GRAV2) ${new Date().toLocaleString()}\n`;
   AT.running = true; AT.abort = null; AT.emergency = false; AT.min = -1e9; AT.max = 1e9;
   WS.hc = [0, 0, 0]; WS.start = [0, 1, 2].map((i) => state[i].last ? state[i].last.pos : 0);
   tnEl("gcStart").disabled = true;
@@ -1750,20 +1843,22 @@ async function gcRun() {
       // La gravedad actual queda activa: sostiene el fémur (sin ella el firmware lo suelta y cae).
       // No sesga la medida: se lee la corriente real en movimiento, no la del modelo.
       for (const c of tnEl("tnCmd").textContent.split("\n")) if (!/,FMAP,|,DITHER/.test(c)) await wsCmd(i, c.replace(/^M\d,/, ""));
-      // La tibia va sin gravedad: su modelo viejo (sin acoplar al fémur) tiene el signo cambiado en
-      // las esquinas y la empuja hacia abajo. El freno la sostiene sola; el fémur sí necesita la suya.
-      if (i === 2) { await wsCmd(i, "GRAV,0,0"); await wsCmd(i, "GRAV2,0,0,0,0"); }
+      // Tibia: el panel le manda GRAV,0,0 y el GRAV2 acoplado al fémur de la identificación del
+      // 19-nov (o el calibrado). Con la pata vieja se apagaba porque su GRAV sin acoplar tenía el
+      // signo cambiado en las esquinas; el nuevo es coherente y la sostiene mientras el fémur se mueve.
+      if (i === 2 && !tnEl("tnCmd").textContent.includes(",GRAV2,")) { await wsCmd(i, "GRAV,0,0"); await wsCmd(i, "GRAV2,0,0,0,0"); }
       await wsCmd(i, "FMAP,CLEAR"); await wsCmd(i, "DITHER,0,80");
       await wsCmd(i, "HOLD,BRAKE"); await wsCmd(i, "LIMIT,0,100"); await wsCmd(i, i === 0 ? "PLIMIT,0.6,4,0.01" : `PLIMIT,${GC_V},4,0.01`);
       let ok = false;
       for (let k = 0; k < 3 && !ok; k++) { await wsWait(null, 300); await wsCmd(i, `PREF,${state[i].last.pos.toFixed(4)}`); ok = (await wsCmd(i, "MODE,POSITION")).includes("ACK"); }
       if (!ok) throw new AtAbort(`no pude activar Posición en M${i + 1}`);
     }
-    // Comprueba en la línea CFG del ESP32 que la tibia quedó sin gravedad (llega ~3 veces por segundo).
+    // Comprueba en la línea CFG del ESP32 que la tibia no tiene el GRAV simple (sin acoplar), que no
+    // vale en todo el rango; su gravedad va solo en GRAV2 (llega ~3 veces por segundo).
     await wsWait(null, 1200);
     const g3 = state[2].cfg ? state[2].cfg.grav : NaN;
-    if (isFinite(g3) && g3 !== 0) throw new AtAbort(`la tibia sigue con gravedad en el ESP32 (GRAV ${g3}); no calibro`);
-    out(`ESP32: tibia sin gravedad ${isFinite(g3) ? "(confirmado en CFG)" : "(sin línea CFG para confirmarlo)"}.`);    delete FMAPS[1]; delete FMAPS[2]; fmSave(); fmInfo();
+    if (isFinite(g3) && g3 !== 0) throw new AtAbort(`la tibia tiene GRAV simple en el ESP32 (GRAV ${g3}); no calibro`);
+    out(`ESP32: tibia sin GRAV simple ${isFinite(g3) ? "(confirmado en CFG)" : "(sin línea CFG para confirmarlo)"}; su gravedad va en GRAV2, acoplada al fémur.`);    delete FMAPS[1]; delete FMAPS[2]; fmSave(); fmInfo();
     await wsGo(0, 0);
     const lin = (a, b, n) => Array.from({ length: n }, (_, k) => a + (b - a) * k / (n - 1));
     const F = lin(fl + 0.15, fh - 0.15, 5), T = lin(tl + 0.15, th - 0.15, 5);

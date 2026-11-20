@@ -82,6 +82,7 @@ La línea `CFG,Mx,...`, unas 3 veces por segundo, trae todos los parámetros. El
   - Supuse que el GRAV del fémur (0.0932, θ0 −2.753) tenía el signo invertido y la v4 lo giraba medio giro. **Era al revés: el signo original es el correcto.** Con el fémur sin corriente (primer intento, gravedad apagada), por encima de 0 rad cae casi siempre hacia θ positivo (2452 muestras contra 60). Con el signo girado (`GRAV,0.0932,0.3883`), la gravedad lo levantaba a saltos hacia +1.1 rad. La v5 quita ese giro. No volver a "corregir" el signo sin medir antes hacia dónde cae.
   - Por debajo de 0 rad cae hacia los dos lados (momentos de inercia y *stick-slip*): ahí la gravedad es débil o el modelo no la representa bien.
   - El GRAV vieja de la tibia (θ0 −1.68) da casi 0 con la tibia horizontal: tampoco sirve.
+  - **v6 (19-nov, pata modificada):** la tibia conserva durante la calibración el GRAV2 acoplado de la identificación del 19-nov (el GRAV simple sigue en 0), y la calibración guardada pasó a la clave `pata_gravcal_v2`, así que las de la pata vieja se ignoran.
   - La calibración escribe la versión en la primera línea y, antes de mover nada, confirma en la línea CFG que la tibia quedó con GRAV 0; si no, se detiene. No aplica el ajuste si R² < 0.5. Dura unos 6 min.
   - El mapa y la gravedad calibrada se guardan en el localStorage del navegador.
 - Los CSV se descargan en *Descargas*. El usuario los mueve a `matlab/datos/`.
