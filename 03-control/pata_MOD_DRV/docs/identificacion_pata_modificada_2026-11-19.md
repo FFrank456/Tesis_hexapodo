@@ -50,7 +50,22 @@ CSV: `matlab/datos/femur_prueba_ganancias.csv` y `tibia_prueba_ganancias.csv`.
 - Aun así se midieron 13 posturas del fémur y 16 de la tibia. Ajuste (posturas nominales, s = +1):
   - Fémur: `GRAV,0.0785,-3.123` + `GRAV2,0.0133,-3.019,3,1` → R² 0.993, error rms 0.003 A (con la gravedad de la identificación: R² 0.867, rms 0.014 A).
   - Tibia: `GRAV,0,0` + `GRAV2,0.0133,-3.019,2,1` → R² 0.82, rms 0.004 A (identificación: R² 0.70).
-- Es la gravedad por defecto del dashboard desde el 19-nov ("Planta identificada").
+- Fue la gravedad por defecto del dashboard hasta la calibración completa del 20-nov.
+
+## Calibración de gravedad v6 completa (20-nov, 17:03, `matlab/datos/calibracion_gravedad.csv`)
+
+- Grilla fémur ±1.04 × tibia ±1.25: 25 de 25 posturas válidas en cada articulación, sin cortes. Fricción media en movimiento: fémur 0.017 A, tibia 0.008 A.
+- Ajuste (recalculado en MATLAB con el mismo método del dashboard; s = +1, el signo esperado):
+  - Fémur: `GRAV,0.0677,-3.100` + `GRAV2,0.0102,-2.968,3,1` → R² 0.886, rms 0.006 A.
+  - Tibia: `GRAV,0,0` + `GRAV2,0.0102,-2.968,2,1` → R² 0.805, rms 0.003 A.
+  - Con estos datos, el ajuste parcial del 19-nov da fémur R² 0.55: el nuevo es claramente mejor.
+- Es la gravedad por defecto del dashboard desde el 20-nov.
+- **Prueba del fémur con la gravedad calibrada (20-nov, 17:21, `femur_prueba_ganancias (2).csv`, dither 10 %; el ESP32 tenía la calibración guardada en el dashboard, GRAV 0.0613):** 7/7, media 1.86 s, error final ≤ 0.009 rad (ayer ≤ 0.018), sobrepaso ≤ 1 %. Pegado el 27 % del tiempo en TRACK (ayer 29 %). Sostener el fémur cerca de la horizontal cuesta ahora 0.068 A (50 % de PWM), antes 0.093 A (57 %). La prueba de ayer fue sin dither, así que la comparación cambia dos cosas a la vez.
+
+- **Prueba de la tibia con la gravedad calibrada (20-nov, 17:29, `tibia_prueba_ganancias (1).csv`, dither 10 %):** los 6 escalones normales llegaron en 0.9–2.1 s, con error ≤ 0.013 rad y sobrepaso ≤ 1 %. El rango quedó escrito como −14 en vez de −1.4, así que un escalón pidió −13.9 rad: la tibia bajó a 2 rad/s, sin resistencia y sin saltos de encoder, hasta **−2.44 rad**, y ahí se trabó empujando con unos 0.09 A durante 8 s. Ayer el tope estaba en −1.74 rad. Causa: el acople de la tibia estaba flojo. Al llegar al tope, el eje patinó y el encoder siguió contando sin que la tibia se moviera. El usuario lo apretó; la tibia no tiene daños. El dashboard ahora rechaza rangos fuera de ±2.2 rad.
+- **Tibia con el acople apretado y el cero repuesto (20-nov, 17:37, rango −1.4…1.4, dither 10 %): 7/7.** Media 1.69 s (0.85–2.95 s), error final ≤ 0.014 rad, sobrepaso ≤ 1 %, barrido completo −1.3 ↔ 1.3 sin tocar topes.
+
+**Estado al 20-nov:** fémur 7/7 y tibia 7/7 con la planta del 19-nov, la gravedad calibrada el 20-nov y dither 10 %. Coxa con sus ganancias anteriores (7/7 el 19-nov).
 
 ## Pendiente
 
