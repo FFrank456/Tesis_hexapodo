@@ -1,1 +1,0 @@
-Pon aquí los CSV exportados del dashboard (ver README.md).
