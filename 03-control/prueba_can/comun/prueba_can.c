@@ -67,6 +67,7 @@ static uint32_t s_omitidos;
 #define LLEGADA_MAX_US   15000000  /* aviso si no llega en 15 s */
 static const char *const k_art[3] = {"coxa", "femur", "tibia"};
 static bool s_armada;
+static bool s_stream;   /* 'v 1': linea EST cada 100 ms para la interfaz web */
 static int64_t s_ultimo_latido, s_orden_t, s_ultimo_pos_print;
 static uint8_t s_pendientes, s_flags, s_latidos_fallidos;
 static int16_t s_pos_mrad[3];
@@ -166,6 +167,7 @@ static void ayuda(void)
         puts("  f 0.5        femur a 0.5 rad      t -0.3   tibia a -0.3 rad");
         puts("  c 0.2        coxa a 0.2 rad       ft 0.3 -0.2   femur y tibia a la vez");
         puts("  e            estado: posiciones, nFAULT, armada");
+        puts("  v 1 / v 0    linea EST cada 100 ms (la usa la interfaz web)");
         puts("  d            desarmar (suelta las articulaciones)");
         puts("  cero f|t|c|todo   el encoder vale 0 en la pose actual (desarmada)");
         puts("  Rangos: coxa -0.5..1.5, femur -1..1, tibia -1..0.7 rad (respecto del cero)");
@@ -523,6 +525,10 @@ static bool leer_estado(void)
         return false;
     s_flags = r.data[1];
     for (int i = 0; i < 3; i++) s_pos_mrad[i] = (int16_t)(r.data[2 + 2*i] | (r.data[3 + 2*i] << 8));
+    /* Formato para maquinas: EST,ms,coxa_mrad,femur_mrad,tibia_mrad,flags */
+    if (s_stream)
+        printf("EST,%lld,%d,%d,%d,%u\n", (long long)(esp_timer_get_time() / 1000),
+               s_pos_mrad[0], s_pos_mrad[1], s_pos_mrad[2], s_flags);
     return true;
 }
 
@@ -611,7 +617,7 @@ static void cero(uint8_t mask)
 /* Latido: con la pata armada, ESTADO cada 100 ms. Avisa llegadas y fallas. */
 static void latido(void)
 {
-    if (!s_armada || s_modo != TWAI_MODE_NORMAL) return;
+    if ((!s_armada && !s_stream) || s_modo != TWAI_MODE_NORMAL) return;
     int64_t ahora = esp_timer_get_time();
     if (ahora - s_ultimo_latido < LATIDO_US) return;
     s_ultimo_latido = ahora;
@@ -620,6 +626,7 @@ static void latido(void)
         return;
     }
     s_latidos_fallidos = 0;
+    if (!s_armada) return;
     if (!(s_flags & LEG_CAN_STATUS_ARMED_BIT)) {
         s_armada = false;
         s_pendientes = 0;
@@ -710,7 +717,11 @@ static void procesar_linea(char *l)
 
     float rad[3] = {0, 0, 0};
     int j = articulacion(w);
-    if (!strcmp(w, "armar")) armar();
+    if (!strcmp(w, "v")) {
+        s_stream = x && x[0] == '1';
+        printf("STREAM,%d\n", s_stream ? 1 : 0);
+    }
+    else if (!strcmp(w, "armar")) armar();
     else if (!strcmp(w, "desarmar")) desarmar();
     else if (!strcmp(w, "estado")) estado_pata();
     else if (!strcmp(w, "cero")) {

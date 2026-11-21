@@ -104,6 +104,18 @@ Comandos de movimiento de la maestra, contra el firmware real `pata_MOD_DRV`. An
 | `d` | Desarmar: suelta las articulaciones |
 | `cero f` / `cero t` / `cero c` / `cero todo` | El encoder vale 0 en la pose actual (con la pata desarmada) |
 
+### Interfaz web: `maestra_dashboard.html`
+
+Ábrela en Chrome o Edge. Pulsa *Conectar maestra* y elige el puerto del S3 (COM4); la interfaz pone sola el bus en NORMAL y pide el estado continuo (`v 1`). Desde ahí puedes:
+
+- armar, desarmar y poner el cero;
+- mover cada articulación con su barra, su casilla o los botones ±0.1;
+- mover fémur y tibia a la vez;
+- reproducir una secuencia de poses (`fémur tibia [pausa]` por línea), que espera a que lleguen las dos antes de pasar a la siguiente;
+- ver las posiciones en una gráfica de 20 s.
+
+**PARO** (o la tecla **Esc**) manda el paro general. La interfaz usa el puerto de la **maestra**, así que el dashboard de la pata puede seguir abierto en COM6 para ver corrientes, aunque mientras la pata está armada rechaza los comandos serie.
+
 Mientras algo se mueve, la maestra imprime `POS,...` cada 0,5 s y `LLEGO,femur,+0.498 rad,1.4 s` cuando la articulación llega. Se puede enviar un objetivo nuevo en pleno movimiento.
 
 ## Secuencia de prueba

@@ -1,0 +1,432 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Maestra CAN</title>
+<style>
+:root {
+  --bg: #0f141b; --panel: #171e27; --panel2: #1e2732; --line: #2a3542;
+  --text: #e6edf5; --muted: #8b98a8; --accent: #57c7ff; --ref: #f5b94a;
+  --ok: #4fd18b; --warn: #f5b94a; --err: #ff6b6b;
+  --c0: #57c7ff; --c1: #b98cff; --c2: #4fd18b;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.4 "Segoe UI", system-ui, sans-serif; }
+header { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+header h1 { font-size: 20px; margin: 0 8px 0 0; font-weight: 600; }
+.sub { color: var(--muted); font-size: 12px; }
+button, input, textarea { font: inherit; color: var(--text); background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; }
+button { cursor: pointer; }
+button:hover:not(:disabled) { border-color: var(--accent); }
+button:disabled { opacity: .45; cursor: default; }
+button.primary { background: #1f4f6b; border-color: #2c6f95; }
+button.stop { background: #8b1f28; border-color: #c33; font-weight: 700; font-size: 16px; padding: 8px 22px; }
+button.stop:hover { border-color: #f88; }
+input[type=number] { width: 84px; }
+main { padding: 12px 16px 24px; display: grid; gap: 12px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; min-width: 0; }
+.card h2 { margin: 0 0 8px; font-size: 15px; display: flex; align-items: center; gap: 8px; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.chip { font-size: 12px; padding: 3px 10px; border-radius: 12px; background: var(--panel2); color: var(--muted); border: 1px solid var(--line); }
+.chip.ok { color: #0c1a12; background: var(--ok); border-color: var(--ok); }
+.chip.warn { color: #1f1606; background: var(--warn); border-color: var(--warn); }
+.chip.err { color: #fff; background: #8b1f28; border-color: #c33; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.joints { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 1000px) { .joints { grid-template-columns: 1fr; } }
+.dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.big { font-size: 30px; font-variant-numeric: tabular-nums; font-weight: 600; }
+.unit { font-size: 14px; color: var(--muted); font-weight: 400; }
+.kv { color: var(--muted); font-size: 12px; margin: 2px 0 8px; }
+.kv b { color: var(--text); font-weight: 500; }
+input[type=range] { width: 100%; accent-color: var(--accent); padding: 0; border: 0; background: none; }
+.scale { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); margin-top: -2px; }
+.state { margin-left: auto; font-size: 12px; }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 1000px) { .two { grid-template-columns: 1fr; } }
+canvas { width: 100%; height: 260px; display: block; background: var(--panel2); border-radius: 6px; }
+textarea { width: 100%; height: 120px; font: 13px/1.4 Consolas, monospace; resize: vertical; }
+#log { height: 220px; overflow: auto; font: 12px/1.35 Consolas, monospace; background: var(--panel2); border-radius: 6px; padding: 6px 8px; white-space: pre-wrap; }
+.l-err { color: var(--err); } .l-ok { color: var(--ok); } .l-tx { color: var(--accent); } .l-warn { color: var(--warn); } .l-mute { color: var(--muted); }
+.hint { color: var(--muted); font-size: 12px; }
+.legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+.legend span { display: inline-flex; align-items: center; gap: 5px; }
+.warnbox { background: #3b2a12; border: 1px solid #6b4a1f; color: #f5d9a8; padding: 10px 12px; border-radius: 8px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Maestra CAN</h1>
+  <span class="sub">ESP32-S3 → pata 1 (MOD_DRV) · protocolo v2</span>
+  <button class="primary" id="btnConn">Conectar maestra</button>
+  <div class="chips" id="chips">
+    <span class="chip" id="chConn">Desconectada</span>
+    <span class="chip" id="chBus">Bus: ?</span>
+    <span class="chip" id="chArm">Pata: ?</span>
+    <span class="chip" id="chData">Sin datos</span>
+  </div>
+  <span style="margin-left:auto"></span>
+  <button class="stop" id="btnStop" title="PARO general 0x0FF (tecla Esc)">PARO</button>
+</header>
+
+<main>
+  <div class="warnbox" id="noSerial" style="display:none">Este navegador no tiene Web Serial. Abre esta página en Chrome o Edge.</div>
+
+  <section class="card">
+    <h2>Pata</h2>
+    <div class="row">
+      <button id="btnArm" class="primary">Armar</button>
+      <button id="btnDisarm">Desarmar</button>
+      <button id="btnZero">Cero de las 3</button>
+      <button id="btnStatus">Leer estado</button>
+      <span class="hint">Armar exige las tres articulaciones quietas. Al desarmar, el fémur queda sin fuerza y cae.</span>
+    </div>
+  </section>
+
+  <section class="joints" id="joints"></section>
+
+  <section class="two">
+    <div class="card">
+      <h2>Fémur y tibia a la vez</h2>
+      <div class="row">
+        <label class="hint">Fémur (rad) <input type="number" id="ftF" step="0.05" value="0.5"></label>
+        <label class="hint">Tibia (rad) <input type="number" id="ftT" step="0.05" value="0.2"></label>
+        <button id="btnFT" class="primary">Ir</button>
+      </div>
+      <h2 style="margin-top:14px">Secuencia</h2>
+      <div class="hint">Una pose por línea: <code>fémur tibia [pausa_s]</code>. Espera a que lleguen las dos antes de seguir.</div>
+      <textarea id="seq">0.9 0
+0.5 0.2 0.5
+0 0 0.5
+0.4 0.4 0.5
+0.9 0</textarea>
+      <div class="row" style="margin-top:6px">
+        <button id="btnSeq" class="primary">Reproducir</button>
+        <button id="btnSeqStop">Detener secuencia</button>
+        <label class="hint"><input type="checkbox" id="seqLoop"> repetir</label>
+        <span class="hint" id="seqInfo"></span>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Posición (últimos 20 s)</h2>
+      <div class="legend" id="legend"></div>
+      <canvas id="chart"></canvas>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Consola de la maestra</h2>
+    <div id="log"></div>
+    <div class="row" style="margin-top:8px">
+      <input id="cmd" style="flex:1; min-width:200px" placeholder="Comando manual, por ejemplo: f 0.5   ·   h = ayuda">
+      <button id="btnSend">Enviar</button>
+      <button id="btnClear">Limpiar</button>
+    </div>
+  </section>
+</main>
+
+<script>
+"use strict";
+/* Rangos y nombres: deben coincidir con can_protocol.h (LEG_CAN_MIN/MAX_MRAD). */
+const J = [
+  { key: "c", name: "Coxa",  color: "var(--c0)", hex: "#57c7ff", min: -0.5, max: 1.5, note: "gira en horizontal" },
+  { key: "f", name: "Fémur", color: "var(--c1)", hex: "#b98cff", min: -1.0, max: 1.0, note: "negativo = sube" },
+  { key: "t", name: "Tibia", color: "var(--c2)", hex: "#4fd18b", min: -1.0, max: 0.7, note: "positivo = flexión hacia abajo" },
+];
+const ARRIVED = 0, NFAULT = 3, ARMED_BIT = 0x40;
+const $ = (id) => document.getElementById(id);
+
+const st = {
+  port: null, reader: null, writer: null, connected: false,
+  bus: "?", armed: null, flags: 0, pos: [NaN, NaN, NaN], target: [null, null, null],
+  moving: [false, false, false], lastEst: 0, samples: [], pendingTargets: null,
+  arrivedEvents: [], seqRun: false,
+};
+
+/* ---------- tarjetas de articulación ---------- */
+J.forEach((j, i) => {
+  const el = document.createElement("div");
+  el.className = "card";
+  el.innerHTML = `
+    <h2><span class="dot" style="background:${j.color}"></span>${j.name}
+      <span class="chip state" id="st${i}">—</span></h2>
+    <div class="big"><span id="pos${i}">—</span> <span class="unit">rad</span></div>
+    <div class="kv">objetivo <b id="tg${i}">—</b> · rango ${j.min} … ${j.max} rad · ${j.note}</div>
+    <input type="range" id="sl${i}" min="${j.min}" max="${j.max}" step="0.01" value="0">
+    <div class="scale"><span>${j.min}</span><span>0</span><span>${j.max}</span></div>
+    <div class="row" style="margin-top:8px">
+      <input type="number" id="in${i}" min="${j.min}" max="${j.max}" step="0.05" value="0">
+      <button class="primary" id="go${i}">Ir</button>
+      <button id="dm${i}">−0.1</button><button id="dp${i}">+0.1</button><button id="z${i}">0</button>
+    </div>`;
+  $("joints").appendChild(el);
+  const sl = $("sl" + i), inp = $("in" + i);
+  sl.addEventListener("input", () => { inp.value = (+sl.value).toFixed(2); });
+  sl.addEventListener("change", () => goJoint(i, +sl.value));
+  inp.addEventListener("keydown", (e) => { if (e.key === "Enter") goJoint(i, +inp.value); });
+  $("go" + i).onclick = () => goJoint(i, +inp.value);
+  const base = () => (st.target[i] ?? (isFinite(st.pos[i]) ? st.pos[i] : 0));
+  $("dm" + i).onclick = () => goJoint(i, base() - 0.1);
+  $("dp" + i).onclick = () => goJoint(i, base() + 0.1);
+  $("z" + i).onclick = () => goJoint(i, 0);
+  const lg = document.createElement("span");
+  lg.innerHTML = `<span class="dot" style="background:${j.color}"></span>${j.name}`;
+  $("legend").appendChild(lg);
+});
+{ const lg = document.createElement("span"); lg.innerHTML = `<span style="color:var(--ref)">- - -</span> objetivo`; $("legend").appendChild(lg); }
+
+/* ---------- registro ---------- */
+function log(text, cls = "") {
+  const box = $("log"), atEnd = box.scrollTop + box.clientHeight >= box.scrollHeight - 4;
+  const d = document.createElement("div");
+  if (cls) d.className = cls;
+  d.textContent = text;
+  box.appendChild(d);
+  while (box.childElementCount > 600) box.firstChild.remove();
+  if (atEnd) box.scrollTop = box.scrollHeight;
+}
+
+/* ---------- serie ---------- */
+let txChain = Promise.resolve();
+function send(line, quiet = false) {
+  if (!st.writer) { log("No hay maestra conectada.", "l-err"); return Promise.resolve(false); }
+  if (!quiet) log("> " + line, "l-tx");
+  txChain = txChain.then(() => st.writer.write(new TextEncoder().encode(line + "\n")).then(() => true))
+                   .catch((e) => { log("Error al escribir: " + e.message, "l-err"); return false; });
+  return txChain;
+}
+
+async function connect() {
+  if (st.connected) return disconnect();
+  try {
+    const port = await navigator.serial.requestPort();
+    await port.open({ baudRate: 115200 });
+    st.port = port; st.writer = port.writable.getWriter(); st.connected = true;
+    log("Maestra conectada.", "l-ok");
+    render();
+    readLoop();
+    setTimeout(initMaster, 600);
+  } catch (e) { log("No se pudo conectar: " + e.message, "l-err"); }
+}
+async function disconnect() {
+  st.connected = false; st.seqRun = false;
+  try { await send("v 0", true); } catch (e) {}
+  try { st.reader && await st.reader.cancel(); } catch (e) {}
+  try { st.writer && st.writer.releaseLock(); } catch (e) {}
+  try { st.port && await st.port.close(); } catch (e) {}
+  st.port = st.reader = st.writer = null; st.bus = "?"; st.armed = null;
+  log("Maestra desconectada.", "l-mute"); render();
+}
+/* Al conectar (o si la maestra se reinicia): estado continuo y bus en NORMAL. */
+function initMaster() { send("v 1", true); send("n", true); }
+
+async function readLoop() {
+  const dec = new TextDecoder();
+  let buf = "";
+  while (st.connected && st.port && st.port.readable) {
+    st.reader = st.port.readable.getReader();
+    try {
+      for (;;) {
+        const { value, done } = await st.reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let k;
+        while ((k = buf.search(/\r?\n/)) >= 0) {
+          const line = buf.slice(0, k); buf = buf.slice(buf[k] === "\r" ? k + 2 : k + 1);
+          if (line.trim()) handleLine(line);
+        }
+        if (buf.length > 4096) buf = "";
+      }
+    } catch (e) { if (st.connected) log("Lectura interrumpida: " + e.message, "l-err"); }
+    finally { try { st.reader.releaseLock(); } catch (e) {} }
+    if (!st.connected) break;
+  }
+  if (st.connected) { st.connected = false; log("Se perdió la conexión con la maestra.", "l-err"); render(); }
+}
+
+/* ---------- interpretar lo que dice la maestra ---------- */
+function handleLine(line) {
+  if (line.startsWith("EST,")) {
+    const f = line.split(",");
+    if (f.length >= 6) {
+      st.pos = [+f[2] / 1000, +f[3] / 1000, +f[4] / 1000];
+      st.flags = +f[5]; st.armed = !!(st.flags & ARMED_BIT); st.lastEst = performance.now();
+      const now = performance.now() / 1000;
+      st.samples.push({ t: now, p: st.pos.slice(), g: st.target.slice() });
+      while (st.samples.length && st.samples[0].t < now - 20) st.samples.shift();
+      if (!st.armed) st.moving = [false, false, false];
+    }
+    return;   /* 10 por segundo: no van a la consola */
+  }
+  if (/^\s*>> /.test(line) || line.startsWith("STREAM,")) return;   /* eco de los comandos */
+  if (line.startsWith("POS,")) return;                                /* ya se ven en las tarjetas */
+  let cls = "";
+  if (line.startsWith("MODO,")) { st.bus = line.slice(5); cls = "l-mute"; }
+  else if (line.includes("=== PRUEBA CAN")) { log("La maestra arrancó: vuelvo a pedir el estado continuo.", "l-warn"); setTimeout(initMaster, 300); }
+  else if (line.startsWith("LLEGO,")) {
+    const f = line.split(","), i = J.findIndex((j) => j.name.toLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu, "") === f[1]);
+    if (i >= 0) { st.moving[i] = false; st.arrivedEvents.push(i); }
+    cls = "l-ok";
+  }
+  else if (line.includes("ACEPTADA")) {
+    if (st.pendingTargets) { st.pendingTargets.forEach((v, i) => { if (v !== null) { st.target[i] = v; st.moving[i] = true; } }); st.pendingTargets = null; }
+    cls = "l-ok";
+  }
+  else if (line.includes("RECHAZADA") || line.includes("DESARMADA") || line.startsWith("FALLA") || line.startsWith("ERROR")) {
+    st.pendingTargets = null; cls = "l-err";
+    if (st.seqRun) { st.seqRun = false; log("Secuencia detenida por el error anterior.", "l-err"); }
+  }
+  else if (line.startsWith("AVISO")) {
+    cls = "l-warn";
+    if (line.includes("desarmo")) { st.moving = [false, false, false]; if (st.seqRun) { st.seqRun = false; log("Secuencia detenida: la pata se desarmó.", "l-err"); } }
+  }
+  else if (line.startsWith("ARMADA") || line.startsWith("DESARMAR") || line.startsWith("CERO")) cls = "l-ok";
+  else if (line.startsWith("RESPUESTA") && line.includes("DETENIDA")) { cls = "l-warn"; st.moving = [false, false, false]; }
+  log(line, cls);
+}
+
+/* ---------- órdenes ---------- */
+const fmt = (v) => (Math.round(v * 1000) / 1000).toString();
+function checkRange(i, v) {
+  const j = J[i];
+  if (!isFinite(v)) { log(`${j.name}: ángulo inválido.`, "l-err"); return false; }
+  if (v < j.min - 1e-9 || v > j.max + 1e-9) { log(`${j.name}: ${fmt(v)} rad está fuera del rango ${j.min} … ${j.max}.`, "l-err"); return false; }
+  return true;
+}
+function goJoint(i, v) {
+  v = Math.round(v * 100) / 100;
+  if (!checkRange(i, v)) return;
+  if (!st.armed) log("La pata no está armada: pulsa Armar primero.", "l-warn");
+  st.pendingTargets = [null, null, null]; st.pendingTargets[i] = v;
+  $("in" + i).value = v.toFixed(2); $("sl" + i).value = v;
+  send(`${J[i].key} ${fmt(v)}`);
+}
+function goFT(f, t) {
+  if (!checkRange(1, f) || !checkRange(2, t)) return false;
+  st.pendingTargets = [null, f, t];
+  send(`ft ${fmt(f)} ${fmt(t)}`);
+  return true;
+}
+function paro() { st.seqRun = false; send("k"); }
+
+/* ---------- secuencia ---------- */
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+function parseSeq() {
+  const poses = [];
+  for (const [n, raw] of $("seq").value.split("\n").entries()) {
+    const l = raw.trim(); if (!l || l.startsWith("#")) continue;
+    const p = l.split(/[\s,;]+/).map(Number);
+    if (p.length < 2 || p.slice(0, 3).some((x) => !isFinite(x))) { log(`Secuencia, línea ${n + 1}: "${raw}" no es "fémur tibia [pausa]".`, "l-err"); return null; }
+    if (!checkRange(1, p[0]) || !checkRange(2, p[1])) return null;
+    poses.push({ f: p[0], t: p[1], pause: p.length > 2 ? Math.max(0, p[2]) : 0 });
+  }
+  if (!poses.length) { log("La secuencia está vacía.", "l-err"); return null; }
+  return poses;
+}
+async function runSeq() {
+  if (st.seqRun) return;
+  const poses = parseSeq(); if (!poses) return;
+  if (!st.armed) { log("Arma la pata antes de reproducir la secuencia.", "l-err"); return; }
+  st.seqRun = true; render();
+  log(`Secuencia: ${poses.length} poses${$("seqLoop").checked ? ", en bucle" : ""}.`, "l-ok");
+  do {
+    for (let k = 0; k < poses.length && st.seqRun; k++) {
+      const p = poses[k];
+      $("seqInfo").textContent = `pose ${k + 1} de ${poses.length}: fémur ${p.f}, tibia ${p.t}`;
+      st.arrivedEvents = [];
+      if (!goFT(p.f, p.t)) { st.seqRun = false; break; }
+      const t0 = performance.now(), got = new Set();
+      while (st.seqRun && got.size < 2) {
+        while (st.arrivedEvents.length) { const i = st.arrivedEvents.shift(); if (i === 1 || i === 2) got.add(i); }
+        if (performance.now() - t0 > 16000) { log("Secuencia detenida: una articulación no llegó en 16 s.", "l-err"); st.seqRun = false; }
+        await sleep(50);
+      }
+      if (st.seqRun && p.pause) await sleep(p.pause * 1000);
+    }
+  } while (st.seqRun && $("seqLoop").checked);
+  if (st.seqRun) log("Secuencia terminada.", "l-ok");
+  st.seqRun = false; $("seqInfo").textContent = ""; render();
+}
+
+/* ---------- vista ---------- */
+function chip(el, text, cls) { el.textContent = text; el.className = "chip" + (cls ? " " + cls : ""); }
+function render() {
+  const fresh = performance.now() - st.lastEst < 1000;
+  chip($("chConn"), st.connected ? "Maestra conectada" : "Desconectada", st.connected ? "ok" : "");
+  chip($("chBus"), "Bus: " + (st.bus === "NORMAL" ? "NORMAL" : st.bus), st.bus === "NORMAL" ? "ok" : st.connected ? "warn" : "");
+  chip($("chArm"), st.armed === null || !fresh ? "Pata: ?" : st.armed ? "Pata ARMADA" : "Pata desarmada", fresh && st.armed ? "ok" : "");
+  chip($("chData"), !st.connected ? "Sin datos" : fresh ? "Pata responde" : "La pata no responde", !st.connected ? "" : fresh ? "ok" : "err");
+  $("btnConn").textContent = st.connected ? "Desconectar" : "Conectar maestra";
+  const can = st.connected, armed = fresh && st.armed;
+  ["btnArm", "btnDisarm", "btnZero", "btnStatus", "btnStop", "btnSend"].forEach((id) => $(id).disabled = !can);
+  $("btnFT").disabled = !armed || st.seqRun; $("btnSeq").disabled = !armed || st.seqRun; $("btnSeqStop").disabled = !st.seqRun;
+  J.forEach((j, i) => {
+    const nf = fresh && (st.flags >> (NFAULT + i)) & 1, arr = fresh && (st.flags >> (ARRIVED + i)) & 1;
+    $("pos" + i).textContent = fresh && isFinite(st.pos[i]) ? (st.pos[i] >= 0 ? "+" : "") + st.pos[i].toFixed(3) : "—";
+    $("tg" + i).textContent = st.target[i] === null ? "—" : st.target[i].toFixed(2) + " rad";
+    let s = "—", c = "";
+    if (nf) { s = "nFAULT"; c = "err"; }
+    else if (fresh && st.armed && st.moving[i]) { s = "en camino"; c = "warn"; }
+    else if (arr) { s = "llegó · sostiene"; c = "ok"; }
+    else if (fresh) s = st.armed ? "libre" : "suelta";
+    chip($("st" + i), s, c);
+    ["go", "dm", "dp", "z"].forEach((p) => $(p + i).disabled = !armed || nf || st.seqRun);
+    $("sl" + i).disabled = !armed || nf || st.seqRun;
+  });
+}
+
+function drawChart() {
+  const cv = $("chart"), dpr = window.devicePixelRatio || 1, W = cv.clientWidth, H = cv.clientHeight;
+  if (cv.width !== W * dpr || cv.height !== H * dpr) { cv.width = W * dpr; cv.height = H * dpr; }
+  const g = cv.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
+  const now = performance.now() / 1000, S = st.samples;
+  let lo = -0.2, hi = 0.2;
+  for (const s of S) for (let i = 0; i < 3; i++) {
+    for (const v of [s.p[i], s.g[i]]) if (v !== null && isFinite(v)) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
+  }
+  const pad = (hi - lo) * 0.1; lo -= pad; hi += pad;
+  const L = 44, R = 8, T = 8, B = 20;
+  const x = (t) => L + (W - L - R) * (1 - (now - t) / 20), y = (v) => T + (H - T - B) * (hi - v) / (hi - lo);
+  g.font = "11px Segoe UI, sans-serif"; g.fillStyle = "#8b98a8"; g.strokeStyle = "#2a3542"; g.lineWidth = 1;
+  const step = (hi - lo) > 1.5 ? 0.5 : 0.2;
+  for (let v = Math.ceil(lo / step) * step; v <= hi; v += step) {
+    g.beginPath(); g.moveTo(L, y(v)); g.lineTo(W - R, y(v)); g.stroke(); g.fillText(v.toFixed(1), 6, y(v) + 4);
+  }
+  for (let s = 0; s <= 20; s += 5) g.fillText(s === 0 ? "ahora" : `−${s} s`, x(now - s) - (s === 0 ? 28 : 12), H - 5);
+  J.forEach((j, i) => {
+    g.strokeStyle = "#f5b94a"; g.setLineDash([5, 4]); g.beginPath(); let on = false;
+    for (const s of S) { const v = s.g[i]; if (v === null) { on = false; continue; } on ? g.lineTo(x(s.t), y(v)) : g.moveTo(x(s.t), y(v)); on = true; }
+    g.stroke(); g.setLineDash([]);
+    g.strokeStyle = j.hex; g.lineWidth = 2; g.beginPath(); on = false;
+    for (const s of S) { const v = s.p[i]; if (!isFinite(v)) { on = false; continue; } on ? g.lineTo(x(s.t), y(v)) : g.moveTo(x(s.t), y(v)); on = true; }
+    g.stroke(); g.lineWidth = 1;
+  });
+}
+
+/* ---------- botones ---------- */
+$("btnConn").onclick = connect;
+$("btnStop").onclick = paro;
+$("btnArm").onclick = () => send("a");
+$("btnDisarm").onclick = () => { st.seqRun = false; send("d"); };
+$("btnStatus").onclick = () => send("e");
+$("btnZero").onclick = () => {
+  if (st.armed) { log("Desarma la pata antes de poner el cero.", "l-err"); return; }
+  if (confirm("El encoder de las 3 articulaciones pasará a valer 0 en la pose actual.\n\nPon el fémur horizontal y la tibia alineada con él: la gravedad calibrada supone ese cero.\n\n¿Continuar?")) {
+    st.target = [null, null, null]; send("cero todo");
+  }
+};
+$("btnFT").onclick = () => goFT(+$("ftF").value, +$("ftT").value);
+$("btnSeq").onclick = runSeq;
+$("btnSeqStop").onclick = () => { st.seqRun = false; log("Secuencia detenida por el usuario (la pata se queda donde está).", "l-warn"); };
+$("btnSend").onclick = () => { const v = $("cmd").value.trim(); if (v) { send(v); $("cmd").value = ""; } };
+$("cmd").addEventListener("keydown", (e) => { if (e.key === "Enter") $("btnSend").click(); });
+$("btnClear").onclick = () => { $("log").innerHTML = ""; };
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && st.connected) { e.preventDefault(); paro(); } });
+
+if (!("serial" in navigator)) { $("noSerial").style.display = "block"; $("btnConn").disabled = true; }
+setInterval(() => { render(); drawChart(); }, 100);
+render();
+</script>
+</body>
+</html>
