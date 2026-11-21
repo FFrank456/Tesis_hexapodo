@@ -85,6 +85,8 @@ canvas { width: 100%; display: block; background: var(--panel2); border-radius: 
     <option value="20" selected>20 s</option><option value="60">60 s</option>
   </select>
   <button id="zeroAll" title="Cero de encoder en los 3 (en STOP)">Cero los 3</button>
+  <button id="nvsSave" title="Guarda en la placa (NVS) las ganancias y compensaciones de los 3 motores. Se cargan solas al arrancar">Guardar en la placa</button>
+  <button id="nvsPose" title="Guarda los ángulos actuales como pose de arranque: al encender, el encoder empieza en esos valores">Guardar pose de arranque</button>
   <button id="diag" title="Diagnóstico del ADC y encoders">Diagnóstico</button>
   <button id="rec">Grabar</button>
   <button id="csv">Exportar CSV</button>
@@ -437,7 +439,7 @@ async function connect() {
   document.getElementById("connect").textContent = "Desconectar";
   writer = port.writable.getWriter();
   readLoop();
-  setTimeout(() => { send("TEL,MULTI"); send("INFO"); }, 300);
+  setTimeout(() => { send("TEL,MULTI"); send("INFO"); send("NVS,STATUS"); }, 300);
 }
 async function disconnect() {
   connected = false;
@@ -722,8 +724,9 @@ pauseBtn.onclick = () => setChartsPaused(!chartsPaused);
 let resetPending = 0, resetFromT = Infinity;
 async function resetEsp() {
   if (!connected || !port) return log("UI: conecta el ESP32 antes de reiniciarlo", "err");
-  if (!confirm("¿Reiniciar el ESP32?\n\nLos motores se detienen y se pierden las ganancias y " +
-               "compensaciones enviadas desde el dashboard (viven en la RAM).")) return;
+  if (!confirm("¿Reiniciar el ESP32?\n\nLos motores se detienen. Al arrancar se cargan las ganancias, " +
+               "compensaciones y la pose de arranque guardadas con \"Guardar en la placa\" / \"Guardar pose de arranque\"; " +
+               "lo que no se haya guardado se pierde.\n\nLa pata debe estar en su pose de arranque.")) return;
   if (AT.running) AT.abort = "Reset ESP32";
   try { await send("STOP"); } catch (e) {}
   try {
@@ -736,7 +739,7 @@ async function resetEsp() {
   state.forEach(s => { s.last = null; s.cfg = null; s.cfgFilled = false; });
   resetPending = performance.now();
   log("UI: reset enviado (RTS). Esperando al ESP32…", "info");
-  setTimeout(() => { if (connected) { send("TEL,MULTI"); send("INFO"); } }, 1500);
+  setTimeout(() => { if (connected) { send("TEL,MULTI"); send("INFO"); send("NVS,STATUS"); } }, 1500);
   setTimeout(() => {
     if (resetPending) {
       resetPending = 0;
@@ -748,6 +751,24 @@ document.getElementById("resetEsp").onclick = resetEsp;document.getElementById("
 document.getElementById("zeroAll").onclick = () => {
   if (state.some((s, i) => mode(i) !== 0)) { log("UI: STOP TODO antes de poner cero", "err"); return; }
   send("ALL,ENCODER,ZERO");
+};
+/* Persistencia en la placa (NVS). El firmware exige los 3 motores en STOP. */
+document.getElementById("nvsSave").onclick = () => {
+  if (!connected) return log("UI: conecta el ESP32 primero", "err");
+  if (state.some((s, i) => mode(i) !== 0)) { log("UI: STOP TODO antes de guardar", "err"); return; }
+  if (!confirm("¿Guardar en la placa las ganancias y compensaciones que tiene ahora el ESP32 (M1, M2 y M3)?\n\n" +
+               "Al reiniciar se cargarán solas. Envía antes cada motor con \"Enviar al ESP32\".")) return;
+  send("NVS,SAVE");
+};
+document.getElementById("nvsPose").onclick = () => {
+  if (!connected) return log("UI: conecta el ESP32 primero", "err");
+  if (state.some((s, i) => mode(i) !== 0)) { log("UI: STOP TODO antes de guardar la pose", "err"); return; }
+  const p = state.map((s) => s.last ? s.last.pos.toFixed(3) : "?").join(" · ");
+  if (!confirm("¿Guardar la pose actual como pose de arranque?\n\nÁngulos ahora: " + p + " rad\n\n" +
+               "El encoder no recuerda el cero al apagarse. Al encender, la placa supondrá que la pata está " +
+               "en esta pose. Hazlo con el cero ya bien puesto (fémur horizontal, tibia alineada) y la pata " +
+               "apoyada en una pose de reposo que puedas repetir cada vez que la enciendas.")) return;
+  send("NVS,POSE");
 };
 document.getElementById("send").onclick = () => { const r = document.getElementById("raw"); if (r.value.trim()) send(r.value.trim()); r.value = ""; };
 document.getElementById("raw").addEventListener("keydown", (e) => { if (e.key === "Enter") document.getElementById("send").click(); });

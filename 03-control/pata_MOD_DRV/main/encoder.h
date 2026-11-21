@@ -44,6 +44,9 @@ void encoder_init(void);
 encoder_sample_t encoder_sample(int motor);
 // Capture a fresh count as the position origin without resetting PCNT or speed.
 void encoder_zero_reference(int motor);
+// Like encoder_zero_reference, but the current pose reads position_rad
+// (boot pose restored from NVS). New reference_id.
+void encoder_set_position(int motor, double position_rad);
 // Change the counting sign (+1/-1). Restarts that motor's count, velocity
 // history and position reference (new reference_id). Call only while stopped.
 void encoder_set_sign(int motor, int sign);

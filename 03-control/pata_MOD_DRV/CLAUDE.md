@@ -66,6 +66,9 @@ Reporte completo del estado del control: `docs/reporte_control_cascada.md`.
 | `GRAV2,G,θ0,motor,c` | Segundo término G·cos(θ + c·θ[motor] + θ0); la tibia depende del fémur |
 | `FRIC,pct` | Antiguo, en % de PWM. **Dejar en 0**: el lazo de corriente lo cancela |
 | `INFO`, `DIAG`, `TEL,MULTI` | Información, diagnóstico (ADC, encoder, nFAULT, ride-through) y telemetría a 100 Hz |
+| `NVS,SAVE` | Guarda en la flash las ganancias, límites y compensaciones de los 3 motores (todo lo de CFG, más FMAP, FRICB, DITHER, ESIGN y HOLD). Exige los 3 motores en STOP |
+| `NVS,POSE` · `NVS,POSE,CLEAR` | Guarda o borra la **pose de arranque**: los ángulos actuales, que el encoder toma al encender |
+| `NVS,STATUS` · `NVS,ERASE` | Qué hay guardado / borrar todo (al reiniciar vuelven los valores de fábrica) |
 
 La línea `CFG,Mx,...`, unas 3 veces por segundo, trae todos los parámetros. El dashboard la interpreta en `handleCfg`.
 
@@ -89,7 +92,7 @@ La línea `CFG,Mx,...`, unas 3 veces por segundo, trae todos los parámetros. El
 
 ## Estado al 14-nov-2026
 
-- **Ganancias:** solo se cambian desde el dashboard. Viven en la RAM; las de fábrica de los `.h` (8.832/80090, 0.0284/0.01392, 6.166/3192) no sirven para la pata.
+- **Ganancias:** solo se cambian desde el dashboard. Viven en la RAM y, desde el 21-nov, se guardan en la flash con *Guardar en la placa* (`NVS,SAVE`). Las de fábrica de los `.h` (8.832/80090, 0.0284/0.01392, 6.166/3192) no sirven para la pata.
 - **Diseño vigente:** corriente ts = 15 ms, velocidad ts = 0.4 s sin sobrepaso, posición ts = 1.0–1.3 s solo P.
   - Coxa: PID 16.03/80162 · SPI 0.00547/0.0480 · PPI 2.084
   - Fémur: PID 17.47/87340 · SPI 0.0185/0.1072 · PPI 2.971
@@ -117,7 +120,7 @@ La línea `CFG,Mx,...`, unas 3 veces por segundo, trae todos los parámetros. El
 1. Correr los tests en PC (en este PC no hay gcc; `test_main_host.c` tiene el test nuevo de vibración del encoder sin correr).
 2. ~~Calibrar gravedad~~ **Descartado el 14-nov** tras 5 intentos: con los bujes de PLA la fricción (0.06–0.11 A) es del tamaño de la gravedad y tapa la medida. Se queda la gravedad vieja (fémur `GRAV,0.0932,-2.7533`, tibia la de la identificación), que es la que dio 8/8 en el fémur. Retomarlo después de cambiar a rodamientos (punto 6), igual que el mapa de fricción.
 3. Repetir la coxa en su rango amplio (antes salió de rango por el disparo al soltarse; ya corregido).
-4. Guardar ganancias y compensaciones en NVS (hoy se pierden al reiniciar).
+4. ~~Guardar ganancias y compensaciones en NVS~~ **Hecho el 21-nov** (`NVS,SAVE`, botón *Guardar en la placa*); se cargan solas al arrancar (línea `NVS,CONFIG,LOADED,mask=0x7`). El cero no se puede guardar tal cual, porque el encoder es incremental: se guarda la **pose de arranque** (`NVS,POSE`, botón *Guardar pose de arranque*). Al encender, el encoder empieza en esos ángulos, así que la pata tiene que estar en esa misma pose de reposo. Su precisión depende de que la pose sea repetible; la solución de fondo es un *homing* contra un tope mecánico. Guardado el 21-nov en la placa de COM6: las 3 configuraciones y la pose de arranque coxa 0, fémur +1.0098 (colgando) y tibia 0. Comprobado con un reinicio: el fémur arranca en +1.0098 y las ganancias vuelven.
 5. Verificar la escala del encoder.
 6. Mecánica: cambiar los bujes de PLA por rodamientos. Es la solución de fondo del *stick-slip*.
 7. Tablas y gráficas para la tesis.

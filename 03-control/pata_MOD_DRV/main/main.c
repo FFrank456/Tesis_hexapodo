@@ -28,6 +28,8 @@
 #ifdef ESP_PLATFORM
 #include "driver/twai.h"
 #include "can_protocol.h"
+#include "nvs_flash.h"
+#include "nvs.h"
 #endif
 
 /*
@@ -1974,6 +1976,216 @@ static void print_info(void)
     printf("INFO,BOARD,%s,TEL,%s\n", BOARD_NAME, g_telemetry_mode == TELEMETRY_MULTI ? "MULTI" : "LEGACY");
 }
 
+#ifdef ESP_PLATFORM
+/* ---------- Persistencia en NVS ----------
+ * "cfg_m1".."cfg_m3": ganancias, limites y compensaciones de cada motor
+ * (lo que manda "Enviar al ESP32" del dashboard). Se guardan con NVS,SAVE.
+ * "pose": angulos de la pose de arranque. El encoder es incremental y vale 0
+ * al encender, asi que el cero real no puede recordarse solo: se guarda en que
+ * angulo esta cada articulacion en una pose de reposo repetible, y al arrancar
+ * el encoder empieza en esos valores. Se guarda con NVS,POSE (con el cero ya
+ * bien puesto y la pata en esa pose). Todo se carga solo al arrancar. */
+#define NVS_NAMESPACE "pata"
+#define PERSIST_VERSION 1U
+
+typedef struct {
+    uint16_t version, size;
+    float pid_kp, pid_ki, out_min, out_max;
+    float spi_kp, spi_ki, ilimit;
+    float ppi_kp, ppi_ki, vmax, acc, tol;
+    int8_t esign, hold_brake, gravity2_motor, pad;
+    float friction_pwm, fric_ic, fric_is, fricb_start, fricb_ramp_ms, dither_pct, dither_hz;
+    float grav_a, grav_off, grav2_a, grav2_off, grav2_coupling;
+    fric_map_t fmap[2];
+} persist_motor_t;
+
+typedef struct {
+    uint16_t version, size;
+    float rad[MOTOR_COUNT];
+} persist_pose_t;
+
+static bool g_nvs_ready;
+static const char *const k_nvs_cfg_key[MOTOR_COUNT] = {"cfg_m1", "cfg_m2", "cfg_m3"};
+
+static void persist_from_motor(const motor_t *m, persist_motor_t *p)
+{
+    *p = (persist_motor_t){.version = PERSIST_VERSION, .size = sizeof(persist_motor_t)};
+    p->pid_kp = m->pid.kp; p->pid_ki = m->pid.ki;
+    p->out_min = m->pid.output_min_percent; p->out_max = m->pid.output_max_percent;
+    p->spi_kp = m->speed.kp; p->spi_ki = m->speed.ki; p->ilimit = m->speed.current_limit_a;
+    p->ppi_kp = m->position.kp; p->ppi_ki = m->position.ki;
+    p->vmax = m->position.max_speed_rad_s; p->acc = m->position.accel_rad_s2; p->tol = m->position.tolerance_rad;
+    p->esign = (int8_t)encoder_get_sign(m->index); p->hold_brake = m->hold_brake ? 1 : 0;
+    p->friction_pwm = m->friction_pwm; p->fric_ic = m->friction_ic_a; p->fric_is = m->friction_is_a;
+    p->fricb_start = m->fricb_start; p->fricb_ramp_ms = (float)(m->fricb_ramp_us / 1000);
+    p->dither_pct = m->dither_pct; p->dither_hz = m->dither_hz;
+    p->grav_a = m->gravity_a; p->grav_off = m->gravity_offset_rad;
+    p->grav2_a = m->gravity2_a; p->grav2_off = m->gravity2_offset_rad;
+    p->grav2_coupling = m->gravity2_coupling; p->gravity2_motor = (int8_t)m->gravity2_motor;
+    p->fmap[0] = m->fmap[0]; p->fmap[1] = m->fmap[1];
+}
+
+static bool persist_valid(const persist_motor_t *p)
+{
+    const float v[] = {p->pid_kp, p->pid_ki, p->out_min, p->out_max, p->spi_kp, p->spi_ki, p->ilimit,
+                       p->ppi_kp, p->ppi_ki, p->vmax, p->acc, p->tol, p->friction_pwm, p->fric_ic,
+                       p->fric_is, p->fricb_start, p->fricb_ramp_ms, p->dither_pct, p->dither_hz,
+                       p->grav_a, p->grav_off, p->grav2_a, p->grav2_off, p->grav2_coupling};
+    for (size_t i = 0; i < sizeof v / sizeof v[0]; ++i) if (!isfinite(v[i])) return false;
+    for (int k = 0; k < 2; ++k) if (p->fmap[k].valid && (p->fmap[k].n < 2 || p->fmap[k].n > FMAP_MAX_BINS)) return false;
+    return p->pid_kp >= 0 && p->pid_ki >= 0 && p->out_min >= 0 && p->out_max <= 100 && p->out_min <= p->out_max &&
+           p->spi_kp >= 0 && p->spi_ki >= 0 && p->ilimit > 0 && p->ppi_kp >= 0 && p->ppi_ki >= 0 &&
+           p->vmax > 0 && p->acc > 0 && p->tol > 0 && (p->esign == 1 || p->esign == -1) &&
+           p->gravity2_motor >= -1 && p->gravity2_motor < MOTOR_COUNT;
+}
+
+/* Only at boot or with the motor stopped. */
+static void persist_to_motor(motor_t *m, const persist_motor_t *p)
+{
+    if (encoder_get_sign(m->index) != p->esign) encoder_set_sign(m->index, p->esign);
+    portENTER_CRITICAL(&g_state_lock);
+    m->pid.kp = p->pid_kp; m->pid.ki = p->pid_ki;
+    m->pid.output_min_percent = p->out_min; m->pid.output_max_percent = p->out_max;
+    pid_reset(&m->pid);
+    m->speed.kp = p->spi_kp; m->speed.ki = p->spi_ki; m->speed.current_limit_a = p->ilimit;
+    m->position.kp = p->ppi_kp; m->position.ki = p->ppi_ki;
+    m->position.max_speed_rad_s = p->vmax; m->position.accel_rad_s2 = p->acc; m->position.tolerance_rad = p->tol;
+    m->hold_brake = p->hold_brake != 0;
+    m->friction_pwm = p->friction_pwm; m->friction_ic_a = p->fric_ic; m->friction_is_a = p->fric_is;
+    m->fricb_start = p->fricb_start; m->fricb_ramp_us = (int64_t)p->fricb_ramp_ms * 1000;
+    m->dither_pct = p->dither_pct; m->dither_hz = p->dither_hz;
+    m->gravity_a = p->grav_a; m->gravity_offset_rad = p->grav_off;
+    m->gravity2_a = p->grav2_a; m->gravity2_offset_rad = p->grav2_off;
+    m->gravity2_coupling = p->grav2_coupling; m->gravity2_motor = p->gravity2_motor;
+    m->fmap[0] = p->fmap[0]; m->fmap[1] = p->fmap[1];
+    portEXIT_CRITICAL(&g_state_lock);
+}
+
+static bool all_motors_stopped(void)
+{
+    for (int i = 0; i < MOTOR_COUNT; ++i) if (!motor_is_stopped(&g_motors[i])) return false;
+    return true;
+}
+
+static esp_err_t nvs_write_blob(const char *key, const void *data, size_t size)
+{
+    nvs_handle_t h;
+    esp_err_t e = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &h);
+    if (e != ESP_OK) return e;
+    e = nvs_set_blob(h, key, data, size);
+    if (e == ESP_OK) e = nvs_commit(h);
+    nvs_close(h);
+    return e;
+}
+
+static bool nvs_read_blob(const char *key, void *data, size_t size)
+{
+    nvs_handle_t h;
+    if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &h) != ESP_OK) return false;
+    size_t len = size;
+    esp_err_t e = nvs_get_blob(h, key, data, &len);
+    nvs_close(h);
+    return e == ESP_OK && len == size;
+}
+
+static void nvs_print_pose(const char *tag, const persist_pose_t *p)
+{
+    printf("%s", tag);
+    for (int i = 0; i < MOTOR_COUNT; ++i) printf(",%s=%.4f", k_motor_names[i], p->rad[i]);
+    putchar('\n');
+}
+
+/* Boot: config of each motor, then the boot pose. */
+static void nvs_load_at_boot(void)
+{
+    esp_err_t e = nvs_flash_init();
+    if (e == ESP_ERR_NVS_NO_FREE_PAGES || e == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        nvs_flash_erase();
+        e = nvs_flash_init();
+    }
+    g_nvs_ready = e == ESP_OK;
+    if (!g_nvs_ready) { printf("NVS,ERROR,%s\n", esp_err_to_name(e)); return; }
+    int loaded = 0;
+    for (int i = 0; i < MOTOR_COUNT; ++i) {
+        char key[16];
+        strcpy(key, k_nvs_cfg_key[i]);
+        persist_motor_t p;
+        if (nvs_read_blob(key, &p, sizeof p) && p.version == PERSIST_VERSION &&
+            p.size == sizeof p && persist_valid(&p)) {
+            persist_to_motor(&g_motors[i], &p);
+            loaded |= 1 << i;
+        }
+    }
+    printf("NVS,CONFIG,%s,mask=0x%X\n", loaded ? "LOADED" : "NONE", loaded);
+    persist_pose_t pose;
+    if (nvs_read_blob("pose", &pose, sizeof pose) && pose.version == PERSIST_VERSION && pose.size == sizeof pose) {
+        for (int i = 0; i < MOTOR_COUNT; ++i) {
+            if (isfinite(pose.rad[i]) && fabs(pose.rad[i]) < 10) encoder_set_position(i, pose.rad[i]);
+        }
+        nvs_print_pose("NVS,POSE,LOADED", &pose);
+    } else {
+        puts("NVS,POSE,NONE");
+    }
+}
+
+/* NVS,SAVE | NVS,POSE | NVS,POSE,CLEAR | NVS,ERASE | NVS,STATUS */
+static void nvs_command(char *action)
+{
+    if (!g_nvs_ready) { puts("ERR,NVS,not_ready"); return; }
+    char *arg = strtok(NULL, ",");
+    if (!action || strtok(NULL, ",")) { puts("ERR,NVS,expected_SAVE_POSE_ERASE_STATUS"); return; }
+    if (strcmp(action, "STATUS") == 0 && !arg) {
+        int saved = 0;
+        for (int i = 0; i < MOTOR_COUNT; ++i) {
+            char key[16]; persist_motor_t p;
+            strcpy(key, k_nvs_cfg_key[i]);
+            if (nvs_read_blob(key, &p, sizeof p) && p.version == PERSIST_VERSION) saved |= 1 << i;
+        }
+        printf("NVS,STATUS,config_mask=0x%X\n", saved);
+        persist_pose_t pose;
+        if (nvs_read_blob("pose", &pose, sizeof pose)) nvs_print_pose("NVS,STATUS,pose", &pose);
+        else puts("NVS,STATUS,pose=NONE");
+        return;
+    }
+    /* Writing flash stalls both cores for a few ms: only with the motors stopped. */
+    if (!all_motors_stopped()) { puts("ERR,NVS,STOP_all_motors_first"); return; }
+    if (strcmp(action, "SAVE") == 0 && !arg) {
+        for (int i = 0; i < MOTOR_COUNT; ++i) {
+            char key[16]; persist_motor_t p;
+            strcpy(key, k_nvs_cfg_key[i]);
+            persist_from_motor(&g_motors[i], &p);
+            esp_err_t e = nvs_write_blob(key, &p, sizeof p);
+            if (e != ESP_OK) { printf("ERR,NVS,SAVE,M%d,%s\n", i + 1, esp_err_to_name(e)); return; }
+        }
+        puts("ACK,NVS,SAVE,M1,M2,M3");
+    } else if (strcmp(action, "POSE") == 0 && !arg) {
+        persist_pose_t pose = {.version = PERSIST_VERSION, .size = sizeof(persist_pose_t)};
+        for (int i = 0; i < MOTOR_COUNT; ++i) {
+            encoder_sample_t enc = encoder_sample(i);
+            if (!isfinite(enc.output_position_rad)) { puts("ERR,NVS,POSE,encoder"); return; }
+            pose.rad[i] = (float)enc.output_position_rad;
+        }
+        esp_err_t e = nvs_write_blob("pose", &pose, sizeof pose);
+        if (e != ESP_OK) { printf("ERR,NVS,POSE,%s\n", esp_err_to_name(e)); return; }
+        nvs_print_pose("ACK,NVS,POSE", &pose);
+    } else if (strcmp(action, "POSE") == 0 && arg && strcmp(arg, "CLEAR") == 0) {
+        nvs_handle_t h;
+        if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &h) == ESP_OK) {
+            nvs_erase_key(h, "pose"); nvs_commit(h); nvs_close(h);
+        }
+        puts("ACK,NVS,POSE,CLEAR");
+    } else if (strcmp(action, "ERASE") == 0 && !arg) {
+        nvs_handle_t h;
+        if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &h) == ESP_OK) {
+            nvs_erase_all(h); nvs_commit(h); nvs_close(h);
+        }
+        puts("ACK,NVS,ERASE (al reiniciar vuelven los valores de fabrica)");
+    } else {
+        puts("ERR,NVS,expected_SAVE_POSE_ERASE_STATUS");
+    }
+}
+#endif
+
 static void handle_serial_command(char *line)
 {
     char *first = strtok(line, ",");
@@ -1993,6 +2205,10 @@ static void handle_serial_command(char *line)
             } else {
                 printf("ERR,CAN,expected_ARM_or_STATUS\n");
             }
+            return;
+        }
+        if (strcmp(first, "NVS") == 0) {
+            nvs_command(strtok(NULL, ","));
             return;
         }
 #endif
@@ -2177,6 +2393,10 @@ void app_main(void)
     }
 #endif
     encoder_init();
+#ifdef ESP_PLATFORM
+    /* Before any task runs: saved gains, compensations and boot pose. */
+    nvs_load_at_boot();
+#endif
     current_sense_init();
     serial_command_init();
 #ifdef ESP_PLATFORM

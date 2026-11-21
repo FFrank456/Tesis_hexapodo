@@ -1,3 +1,4 @@
+#include <math.h>
 #include "encoder.h"
 #include "encoder_processing.h"
 #include "driver/pulse_cnt.h"
@@ -86,6 +87,15 @@ void encoder_zero_reference(int motor)
 {
     encoder_t *e = encoder_at(motor);
     encoder_processing_zero(&e->processing, encoder_raw_count(e));
+}
+
+void encoder_set_position(int motor, double position_rad)
+{
+    encoder_t *e = encoder_at(motor);
+    const int64_t now = encoder_processing_extend(&e->processing, encoder_raw_count(e));
+    const double counts = position_rad * ENCODER_COUNTS_PER_OUTPUT_REV / ENCODER_TWO_PI;
+    e->processing.reference_count_x4 = now - (int64_t)llround(counts);
+    ++e->processing.reference_id;
 }
 
 void encoder_set_sign(int motor, int sign)
