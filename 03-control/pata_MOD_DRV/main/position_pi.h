@@ -89,11 +89,20 @@ static inline bool position_pi_update(position_pi_t *p,double measured_rad,
     p->quiet_since_us=0;
     bool blocked=downstream_limited && error*p->direction>0;
     if(blocked)requested=p->kp*(float)error+p->integral_rad_s;
-    float bounded=fminf(p->max_speed_rad_s,fmaxf(-p->max_speed_rad_s,requested));
+    /* Approach envelope: reserve one position period plus the 20 ms encoder
+     * window, then decelerate at the configured acceleration. This is a
+     * reference governor, not a guarantee of physical stopping distance. */
+    float distance=fmaxf(0,(float)fabs(error)-p->tolerance_rad);
+    float latency_s=POSITION_PERIOD_US*1e-6f+0.020f;
+    float al=p->accel_rad_s2*latency_s;
+    float approach_limit=2*p->accel_rad_s2*distance /
+        (sqrtf(al*al+2*p->accel_rad_s2*distance)+al);
+    float speed_limit=fminf(p->max_speed_rad_s,approach_limit);
+    float bounded=fminf(speed_limit,fmaxf(-speed_limit,requested));
     float delta=p->accel_rad_s2*dt;
     float ramped=fminf(p->output_rad_s+delta,fmaxf(p->output_rad_s-delta,bounded));
     /* Limits may be tightened while running; never exceed the new speed ceiling. */
-    ramped=fminf(p->max_speed_rad_s,fmaxf(-p->max_speed_rad_s,ramped));
+    ramped=fminf(speed_limit,fmaxf(-speed_limit,ramped));
     bool saturating=(requested-ramped)*error>0;
     if(!saturating && !blocked)p->integral_rad_s=candidate;
     p->output_rad_s=ramped;p->limited=saturating || blocked;p->state=POSITION_TRACK;

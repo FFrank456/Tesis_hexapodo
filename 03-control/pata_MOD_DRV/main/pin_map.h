@@ -19,7 +19,7 @@
  * PMODE, nSLEEP y VREF a 3V3 en la placa (modo PWM, siempre activo).
  * IO35 es solo entrada y no tiene pull-up interno: el encoder de J3A debe
  * tener salida push-pull o una resistencia de pull-up externa.
- * IO21/IO22 quedan para el modulo CAN (J4); este firmware no los usa.
+ * IO21/IO22 conectan el controlador TWAI al modulo CAN (J4).
  *
  * ASUNCION: DRVA = Coxa, DRVB = Femur, DRVC = Tibia. Si en la pata se cablea
  * distinto, basta con reordenar las columnas de estos arreglos.
@@ -29,6 +29,9 @@
 
 #define BOARD_NAME "pata_MOD_DRV"
 #define MOTOR_COUNT 3
+#define CAN_TX_GPIO 21
+#define CAN_RX_GPIO 22
+#define CAN_LEG_ID 1
 
 /* Motor que reciben los comandos sin prefijo y la telemetria LEGACY al
  * arrancar (0 = Coxa, 1 = Femur, 2 = Tibia). Se cambia en caliente con SEL,1|2|3,

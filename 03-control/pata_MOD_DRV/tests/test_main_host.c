@@ -11,6 +11,15 @@
 #include "encoder.h"
 #include "current_sense.h"
 
+#ifdef _WIN32
+/* The host tests invoke command routing directly; no nonblocking stdin loop. */
+#define F_GETFL 0
+#define F_SETFL 1
+#define O_NONBLOCK 0
+static int fcntl(int fd, int command, int flags)
+{ (void)fd; (void)command; (void)flags; return 0; }
+#endif
+
 static int64_t now_us = 1000000;
 int64_t esp_timer_get_time(void) { return now_us; }
 
@@ -120,10 +129,20 @@ static void step(int ms)
 
 int main(void)
 {
-    int fd = open("/tmp/pata_banco1_host_out.txt", O_RDWR | O_CREAT | O_TRUNC, 0600);
+    char output_path[1024];
+#ifdef _WIN32
+    const char *temp_dir = getenv("TEMP");
+    CHECK(temp_dir != NULL);
+    snprintf(output_path, sizeof(output_path), "%s/pata_mod_drv_host_out.txt", temp_dir);
+    int fd = open(output_path, O_RDWR | O_CREAT | O_TRUNC | O_BINARY, 0600);
+#else
+    snprintf(output_path, sizeof(output_path), "/tmp/pata_mod_drv_host_out.txt");
+    int fd = open(output_path, O_RDWR | O_CREAT | O_TRUNC, 0600);
+#endif
     CHECK(fd >= 0);
     fflush(stdout); dup2(fd, STDOUT_FILENO);
-    capture = fopen("/tmp/pata_banco1_host_out.txt", "r"); setvbuf(capture, NULL, _IONBF, 0);
+    capture = fopen(output_path, "rb"); CHECK(capture != NULL);
+    setvbuf(capture, NULL, _IONBF, 0);
     setvbuf(stdout, NULL, _IONBF, 0);
 
     for (int i = 0; i < 40; ++i) gpio_level[i] = 1; /* nFAULT pulled up */
@@ -491,6 +510,51 @@ int main(void)
     CHECK(g_motors[0].control_mode == CONTROL_MODE_OPEN && g_motors[0].direction == MOTOR_BRAKE);
     cmd("M1,STOP"); CHECK(g_motors[0].direction == MOTOR_STOP);
     cmd("M1,GRAV,0,0"); cmd("STOP");
+
+    /* Regression: measured overspeed must brake even when Ic/dither or an
+     * aiding gravity model still request current. Exercise both directions. */
+    for (int sign = -1; sign <= 1; sign += 2) {
+        for (int gravity = 0; gravity < 2; ++gravity) {
+            cmd("STOP"); spd[0] = 0; step(300); cmd("M1,ENCODER,ZERO");
+            cmd("M1,HOLD,BRAKE"); cmd("M1,FRICI,0.0468,0.15");
+            cmd("M1,DITHER,10,80"); cmd("M1,PLIMIT,0.15,4,0.01");
+            cmd("M1,PPI,1.772,0");
+            cmd(gravity ? (sign > 0 ? "M1,GRAV,0.05,0" : "M1,GRAV,-0.05,0") : "M1,GRAV,0,0");
+            cmd(sign > 0 ? "M1,PREF,0.5" : "M1,PREF,-0.5");
+            CHECK(strncmp(cmd("M1,MODE,POSITION"), "M1,ACK,MODE,POSITION", 20) == 0);
+            step(20);
+            motor_t *m = &g_motors[0];
+            control_rates_t rates = {0};
+            spd[0] = sign * 5.3331;
+            now_us += 1000;
+            motor_control_step(m, now_us, &rates);
+            CHECK(m->direction == MOTOR_BRAKE && m->duty_percent == 0);
+            CHECK(m->pid.current_ref_a == 0 && m->friction_term_a == 0);
+            CHECK(!m->friction_breakaway && !m->gravity_holding);
+            CHECK(m->speed.integral_a == 0 && m->pid.integrator == 0);
+            /* Fresh feedback at rest releases the brake and resumes tracking. */
+            spd[0] = 0; now_us += 1000;
+            motor_control_step(m, now_us, &rates);
+            CHECK(m->control_mode == CONTROL_MODE_POSITION);
+            CHECK(m->pid.current_ref_a > 0);
+            now_us += 1000;
+            motor_control_step(m, now_us, &rates);
+            CHECK(m->direction == (sign > 0 ? MOTOR_CW : MOTOR_CCW));
+            /* A signed gravity command opposing the overspeed is already
+             * braking the load and must remain available. */
+            cmd("M1,FRICI,0,0");
+            cmd(sign > 0 ? "M1,GRAV,-0.05,0" : "M1,GRAV,0.05,0");
+            spd[0] = sign * 5.3331; now_us += 1000;
+            motor_control_step(m, now_us, &rates);
+            CHECK(m->pid.current_ref_a > 0);
+            CHECK(m->drive_direction == (sign > 0 ? MOTOR_CCW : MOTOR_CW));
+            now_us += 1000;
+            motor_control_step(m, now_us, &rates);
+            CHECK(m->direction == m->drive_direction);
+        }
+    }
+    cmd("STOP"); spd[0] = 0; cmd("M1,GRAV,0,0");
+    cmd("M1,FRICI,0,0"); cmd("M1,DITHER,0,80");
 
     /* Telemetry line layout: T + time + selected + 11 per motor. */
     fflush(stdout);

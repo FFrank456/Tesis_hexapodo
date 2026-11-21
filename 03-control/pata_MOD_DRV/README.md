@@ -2,7 +2,7 @@
 
 Control en cascada (corriente → velocidad → posición) de los **3 motores de una pata** — Coxa, Fémur y Tibia — **funcionando a la vez** en la placa propia **MOD_DRV** (proyecto Altium `Moduloa_DRV`, en `02-electronica/unidad2-MOD_DRV`): ESP32-WROOM-32E + 3 DRV8876 en chip.
 
-Es el mismo firmware que `pata_banco1` (el banco de pruebas en galleta con ESP32 DevKit y módulos DRV8876). Solo cambia `main/pin_map.h`:
+Comparte el control de motores con `pata_banco1` (el banco de pruebas en galleta con ESP32 DevKit y módulos DRV8876). `main/pin_map.h` define para la MOD DRV:
 - los pines,
 - la resistencia IPROPI de 3 kΩ (3.0 V/A),
 - el nFAULT de cada driver, que aquí sí está conectado.
@@ -129,3 +129,7 @@ gcc -std=c11 -Imain tests/test_dma_sense.c -lm -o t && ./t
 - El tipo de salida del encoder en IO35: sin pull-up interno, un encoder open-drain no contaría.
 - El signo de cada encoder.
 - Las ganancias en esta placa, con los motores de la pata.
+
+## Prueba de control por CAN
+
+El ESP32-S3 puede mandar consignas de posición a la MOD DRV. El cableado, los comandos de prueba y el formato de las tramas están en la [guía de la prueba CAN](../prueba_can/README.md).

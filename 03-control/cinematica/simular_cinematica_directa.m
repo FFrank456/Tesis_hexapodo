@@ -92,7 +92,8 @@ fus.signo = [-1  1 -1];
 %          identificacion: el femur cuelga en q1 = +1.47 rad)
 %   Tibia: encoder negativo = SUBE -> th2 = +q2   (confirmado a mano el 19-nov;
 %          th2 + es flexion hacia abajo)
-%   Coxa : SIN verificar
+%   Coxa : encoder negativo = HORARIO visto desde arriba -> th0 = +q0 (confirmado a mano
+%          el 20-nov; th0 + es antihorario)
 %   (Comparado con Fusion: en femur y tibia el encoder gira al reves que la junta del CAD.)
 enc.signo  = [ 1  -1   1];
 enc.offset = deg2rad([0 0 0]); % supone encoder = 0 en la pose cero del CAD (por confirmar)

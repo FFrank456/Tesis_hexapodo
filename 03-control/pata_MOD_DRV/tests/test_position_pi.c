@@ -55,5 +55,18 @@ int main(void){
     CHECK(!position_reference_valid(INFINITY) && !position_reference_valid(10001));
     p=initial();CHECK(position_pi_update(&p,0,0,1020000,false));position_pi_reset(&p);
     CHECK(p.output_rad_s==0 && p.integral_rad_s==0 && p.reference_rad==1 && p.last_update_us==0);
-    puts("PASS: position PI, ramp, rails, downstream antiwindup, coast reversal dwell, hysteresis, invalid data");
+    /* Small steps cannot accelerate to vmax while stuck. Both directions
+     * respect the stopping envelope and do not accumulate saturated integral. */
+    for(int sign=-1;sign<=1;sign+=2) {
+        p=initial();p.reference_rad=sign*.1;p.direction=sign;
+        for(int n=1;n<=50;n++)CHECK(position_pi_update(&p,0,0,1000000+n*20000LL,false));
+        float v=fabsf(p.output_rad_s);
+        CHECK(v<.72f && v>.70f && p.integral_rad_s==0);
+        CHECK(v*.04f+v*v/(2*p.accel_rad_s2)<=.080001f);
+        CHECK(position_pi_update(&p,sign*.07,sign*v,2020000,false));
+        CHECK(fabsf(p.output_rad_s)<.175f);
+        CHECK(position_pi_update(&p,sign*.09,0,2040000,false));
+        CHECK(p.output_rad_s==0);
+    }
+    puts("PASS: position PI and bidirectional approach envelope");
 }

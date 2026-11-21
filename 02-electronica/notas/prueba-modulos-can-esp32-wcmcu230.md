@@ -205,9 +205,39 @@ Prueba con una sola placa: cambiar a `TWAI_MODE_NO_ACK` y transmitir con `tx.sel
 Registro:
 
 - [ ] Resistencia medida entre CANH y CANL: ___ Ω
-- [ ] Recepción correcta a 500 kbit/s
-- [ ] Mensajes perdidos en 1000 envíos: ___
+- [x] Recepción correcta a 500 kbit/s (20/11/2026)
+- [x] Mensajes perdidos en 1000 envíos: **0**
 - [ ] Prueba con cable largo (≥ 1 m) o con motores encendidos cerca
+
+### Prueba del 20/11/2026: maestra ESP32-S3 ↔ MOD_DRV
+
+Firmware de `03-control/prueba_can/` (ESP-IDF 5.4.4, el mismo protocolo que `pata_MOD_DRV/main/can_protocol.h`). Maestra ESP32-S3 DevKitC-1 en COM4 (GPIO4 → CTX, GPIO5 ← CRX); MOD_DRV en COM6 como pata 1 (IO21/IO22). Cables cortos en banco.
+
+| Prueba | Resultado |
+|---|---|
+| CRX en reposo, con el bus conectado | 1 en las dos placas |
+| Autotest local (NO_ACK + autorrecepción) | 10/10 en las dos |
+| Ping `0x101` → PONG `0x201` | Pasa; ida y vuelta de 716 µs en el primer ping |
+| Pata → maestra, contador en `0x201` | 3/3 con ACK, recibidos en orden |
+| Ráfaga de 1000 pings | **1000/1000**; ida y vuelta: mín 255 µs, prom 263 µs, máx 1656 µs |
+| Errores después de la ráfaga | TEC = REC = 0, errores de bus = 0, rx perdidas = 0 |
+
+**Contra el firmware real `pata_MOD_DRV` (paso 7, misma placa COM6):** 6/6 pings con PONG y el PARO `0x0FF` respondido con DETENIDA, con TEC = REC = 0. La ida y vuelta sube a **≈ 8,3 ms** (contra 0,26 ms del firmware de prueba): `leg_can_task` revisa la cola con `twai_receive(..., 0)` y, si no hay nada, duerme con `vTaskDelay(1)`, que con FreeRTOS a 100 Hz es un tick de 10 ms. Para bajar la latencia, conviene bloquear en `twai_receive` con timeout antes de tomar `g_motor_lock`.
+
+**Fémur y tibia movidos por CAN (20/11/2026, misma placa COM6, V_MOT encendida):** comando `m` de la maestra (máscara 0x06, una consigna cada 50 ms, relativa al origen de `CAN,ARM`): 0 → +50 → 0 → −50 → 0 mrad. 265/265 consignas ACEPTADA, PARO final con DETENIDA. La coxa quedó fuera porque su DRVA tiene nFAULT con V_MOT encendida.
+
+| Tramo | Fémur: ref → llegó (rad) | Tibia: ref → llegó (rad) |
+|---|---|---|
+| +50 mrad | 1.589 → 1.571 (18 mrad) | −0.053 → −0.074 (21 mrad) |
+| 0 | 1.539 → se quedó en 1.571 (32 mrad) | −0.103 → se quedó en −0.074 (29 mrad) |
+| −50 mrad | 1.489 → 1.508 (19 mrad) | −0.153 → −0.144 (9 mrad) |
+| 0 | 1.539 → se quedó en 1.508 (31 mrad) | −0.103 → −0.121 (18 mrad) |
+
+Cuando la consigna está a 50 mrad, se mueven y llegan dentro de la tolerancia (20 mrad). Al volver a 0, el error queda en 30 mrad, por debajo de 2 × tolerancia (40 mrad), así que la articulación sigue en HOLD y no corrige. Eso es del lazo de posición, no del CAN: con el límite de ±50 mrad, hacen falta pasos más grandes o una tolerancia menor para que cada paso se note.
+
+Fallas encontradas por el camino:
+- Una MOD_DRV (COM17) tenía CRX en 0 aunque el pin CRX del módulo daba 3,28 V: la unión J4 pin 4 → IO22 (pin 36 del WROOM) estaba abierta. Resoldarla funcionó, pero se volvió a abrir al mover la placa. Con esa placa conectada, todo el bus quedaba en dominante.
+- El firmware de prueba tenía `pdMS_TO_TICKS(5)` = 0 con FreeRTOS a 100 Hz, lo que hacía saltar el task watchdog. Se corrigió con una espera mínima de 1 tick.
 
 ## 🔗 Relacionado
 

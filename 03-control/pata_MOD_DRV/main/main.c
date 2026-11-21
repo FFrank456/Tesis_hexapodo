@@ -25,6 +25,10 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/task.h"
+#ifdef ESP_PLATFORM
+#include "driver/twai.h"
+#include "can_protocol.h"
+#endif
 
 /*
  * pata_MOD_DRV - cascada corriente/velocidad/posicion para los 3 motores de
@@ -573,6 +577,158 @@ static bool control_start_position(motor_t *m)
     return true;
 }
 
+#ifdef ESP_PLATFORM
+static bool g_can_ready;
+static bool g_can_armed;
+static uint8_t g_can_active_mask;
+static int64_t g_can_deadline;
+static double g_can_origin[MOTOR_COUNT];
+static uint32_t g_can_reference_id[MOTOR_COUNT];
+
+/* CAN state and motor state are serialized by g_motor_lock. */
+static void leg_can_disarm(void)
+{
+    for (int i = 0; i < MOTOR_COUNT; ++i) {
+        if (g_can_active_mask & (1U << i)) control_stop(&g_motors[i]);
+    }
+    g_can_active_mask = 0;
+    g_can_armed = false;
+}
+
+static bool leg_can_arm(void)
+{
+    if (!g_can_ready || g_can_armed) return false;
+    twai_status_info_t status;
+    if (twai_get_status_info(&status) != ESP_OK || status.state != TWAI_STATE_RUNNING) return false;
+    for (int i = 0; i < MOTOR_COUNT; ++i) {
+        encoder_sample_t enc = encoder_sample(i);
+        if (!motor_is_stopped(&g_motors[i]) || !enc.speed_valid ||
+            !isfinite(enc.output_position_rad) || !isfinite(enc.output_speed_rad_s) ||
+            fabs(enc.output_speed_rad_s) > POSITION_STOP_RAD_S) return false;
+        g_can_origin[i] = enc.output_position_rad;
+        g_can_reference_id[i] = enc.reference_id;
+    }
+    if (twai_clear_receive_queue() != ESP_OK) return false;
+    g_can_armed = true;
+    return true;
+}
+
+static uint8_t leg_can_position(const twai_message_t *frame, int64_t now)
+{
+    if (!g_can_armed) return LEG_CAN_DISARMED;
+    uint8_t mask = frame->data[0];
+    double refs[MOTOR_COUNT];
+    if (!mask || (mask & ~LEG_CAN_AXIS_MASK) ||
+        (g_can_active_mask && mask != g_can_active_mask)) return LEG_CAN_REJECTED;
+
+    for (int i = 0; i < MOTOR_COUNT; ++i) {
+        if (!(mask & (1U << i))) continue;
+        int offset = frame->data[1 + 2*i] | (frame->data[2 + 2*i] << 8);
+        if (offset >= 32768) offset -= 65536;
+        if (abs(offset) > LEG_CAN_MAX_OFFSET_MRAD) return LEG_CAN_REJECTED;
+        refs[i] = g_can_origin[i] + offset / 1000.0;
+        motor_t *m = &g_motors[i];
+        if (!position_reference_valid(refs[i]) || m->nfault_low_ms >= DRV_NFAULT_FILTER_MS ||
+            encoder_sample(i).reference_id != g_can_reference_id[i]) {
+            leg_can_disarm();
+            return LEG_CAN_REJECTED;
+        }
+    }
+
+    bool starting = g_can_active_mask == 0;
+    g_can_active_mask = mask;
+    for (int i = 0; i < MOTOR_COUNT; ++i) {
+        if (!(mask & (1U << i))) continue;
+        motor_t *m = &g_motors[i];
+        portENTER_CRITICAL(&g_state_lock);
+        m->position.reference_rad = refs[i];
+        m->position_reference_id = g_can_reference_id[i];
+        m->position_reference_set = true;
+        portEXIT_CRITICAL(&g_state_lock);
+        if (starting && !control_start_position(m)) {
+            leg_can_disarm();
+            return LEG_CAN_REJECTED;
+        }
+    }
+    g_can_deadline = now + LEG_CAN_TIMEOUT_US;
+    return LEG_CAN_ACCEPTED;
+}
+
+static void leg_can_task(void *arg)
+{
+    (void)arg;
+    while (true) {
+        twai_message_t frame;
+        uint32_t alerts = 0;
+        int response = -1;
+        xSemaphoreTake(g_motor_lock, portMAX_DELAY);
+        bool received = twai_receive(&frame, 0) == ESP_OK;
+        twai_read_alerts(&alerts, 0);
+        int64_t now = esp_timer_get_time();
+        if (g_can_active_mask && now >= g_can_deadline) leg_can_disarm();
+        for (int i = 0; i < MOTOR_COUNT; ++i) {
+            if ((g_can_active_mask & (1U << i)) &&
+                g_motors[i].control_mode != CONTROL_MODE_POSITION) leg_can_disarm();
+        }
+        if (alerts & (TWAI_ALERT_BUS_OFF | TWAI_ALERT_RX_QUEUE_FULL)) {
+            leg_can_disarm();
+            twai_clear_receive_queue();
+            received = false;
+        }
+        if (alerts & TWAI_ALERT_BUS_OFF) twai_initiate_recovery();
+        if (alerts & TWAI_ALERT_BUS_RECOVERED) twai_start();
+        if (received && !frame.extd && !frame.rtr) {
+            if (frame.identifier == LEG_CAN_STOP_ID && frame.data_length_code == 0) {
+                leg_can_disarm();
+                for (int i = 0; i < MOTOR_COUNT; ++i) control_stop(&g_motors[i]);
+                response = LEG_CAN_STOPPED;
+            } else if (frame.identifier == LEG_CAN_COMMAND_ID(CAN_LEG_ID)) {
+                if (frame.data_length_code == 0) response = LEG_CAN_PONG;
+                else if (frame.data_length_code == LEG_CAN_POSITION_DLC)
+                    response = leg_can_position(&frame, now);
+                else response = LEG_CAN_REJECTED;
+            }
+        }
+        xSemaphoreGive(g_motor_lock);
+        if (response >= 0) {
+            twai_message_t reply_frame = {.identifier = LEG_CAN_REPLY_ID(CAN_LEG_ID),
+                                          .ss = 1, .data_length_code = 1};
+            reply_frame.data[0] = response;
+            twai_transmit(&reply_frame, 0);
+        }
+        if (!received) vTaskDelay(1);
+    }
+}
+
+static bool leg_can_init(void)
+{
+    twai_general_config_t config =
+        TWAI_GENERAL_CONFIG_DEFAULT(CAN_TX_GPIO, CAN_RX_GPIO, TWAI_MODE_NORMAL);
+    config.alerts_enabled = TWAI_ALERT_BUS_OFF | TWAI_ALERT_BUS_RECOVERED | TWAI_ALERT_RX_QUEUE_FULL;
+    twai_timing_config_t timing = TWAI_TIMING_CONFIG_500KBITS();
+    twai_filter_config_t filter = TWAI_FILTER_CONFIG_ACCEPT_ALL();
+    if (twai_driver_install(&config, &timing, &filter) != ESP_OK) return false;
+    if (twai_start() == ESP_OK &&
+        xTaskCreate(leg_can_task, "leg_can", 4096, NULL, 5, NULL) == pdPASS) return true;
+    twai_stop();
+    twai_driver_uninstall();
+    return false;
+}
+
+static void leg_can_print_status(void)
+{
+    twai_status_info_t status;
+    if (!g_can_ready || twai_get_status_info(&status) != ESP_OK) {
+        puts("CAN,STATUS,ERROR");
+        return;
+    }
+    printf("CAN,STATUS,state=%d,rx_pin=%d,tx_errors=%lu,rx_errors=%lu,bus_errors=%lu,"
+           "rx_missed=%lu\n", (int)status.state, gpio_get_level(CAN_RX_GPIO),
+           (unsigned long)status.tx_error_counter, (unsigned long)status.rx_error_counter,
+           (unsigned long)status.bus_error_count, (unsigned long)status.rx_missed_count);
+}
+#endif
+
 /* Fires at every PWM period start (counter == 0) of the shared timer. */
 static bool pwm_timer_empty_callback(mcpwm_timer_handle_t timer,
                                      const mcpwm_timer_event_data_t *edata,
@@ -916,11 +1072,30 @@ static void motor_control_step(motor_t *m, int64_t now_us, const control_rates_t
          * when the axis overruns the speed reference with zero current asked. */
         bool brake_hold = m->hold_brake && m->control_mode == CONTROL_MODE_POSITION &&
                           m->position.state != POSITION_TRACK;
+        bool overspeed_brake = false;
         if (m->hold_brake && cascade && encoder.speed_valid && isfinite(encoder.output_speed_rad_s)) {
             float projected = (m->control_direction == MOTOR_CCW ? -1.0f : 1.0f) * (float)encoder.output_speed_rad_s;
-            if (projected > m->speed.reference_rad_s + OVERSPEED_BRAKE_RAD_S) brake_hold = true;
+            if (projected > m->speed.reference_rad_s + OVERSPEED_BRAKE_RAD_S) {
+                brake_hold = true;
+                /* Ic, breakaway and gravity can keep the total current positive
+                 * after the speed PI reaches zero. Override that forward drive;
+                 * preserve a gravity/current command that already opposes motion. */
+                overspeed_brake = valid &&
+                    (m->pid.current_ref_a == 0 || m->drive_direction == m->control_direction);
+            }
         }
-        if (!stop_for_sensing && direction_change_brake) {
+        if (!stop_for_sensing && overspeed_brake) {
+            pid_reset(&m->pid);
+            m->pid.current_ref_a = 0;
+            m->pid.last_sample_us = sample_time_us;
+            m->speed.integral_a = m->speed.output_a = m->speed_current_a = 0;
+            m->friction_term_a = 0;
+            m->friction_breakaway = false;
+            m->friction_stuck_since_us = 0;
+            m->gravity_holding = false;
+            pid_direction = MOTOR_BRAKE;
+            apply_pid_output = true;
+        } else if (!stop_for_sensing && direction_change_brake) {
             m->pid.last_sample_us = sample_time_us;
             pid_direction = MOTOR_BRAKE;
             apply_pid_output = true;
@@ -1121,6 +1296,15 @@ static int parse_motor_token(const char *text)
 /* Per-motor command set: identical wire format to ControlCurrentN20. */
 static void handle_motor_command(motor_t *m, char *command)
 {
+#ifdef ESP_PLATFORM
+    if (g_can_armed) {
+        if (strcmp(command, "STOP") == 0) leg_can_disarm();
+        else {
+            reply("ERR,CAN,STOP_before_serial_motor_command\n");
+            return;
+        }
+    }
+#endif
     if (command == NULL) return;
 
     if (strcmp(command, "SEQ") == 0) {
@@ -1719,7 +1903,23 @@ static void handle_serial_command(char *line)
     if (target < 0) {
         g_reply_prefix[0] = '\0';
         /* Global commands (no motor prefix). */
+#ifdef ESP_PLATFORM
+        if (strcmp(first, "CAN") == 0) {
+            char *action = strtok(NULL, ",");
+            if (action && strcmp(action, "STATUS") == 0 && !strtok(NULL, ",")) {
+                leg_can_print_status();
+            } else if (action && strcmp(action, "ARM") == 0 && !strtok(NULL, ",")) {
+                printf(leg_can_arm() ? "ACK,CAN,ARM\n" : "ERR,CAN,ARM_REJECTED\n");
+            } else {
+                printf("ERR,CAN,expected_ARM_or_STATUS\n");
+            }
+            return;
+        }
+#endif
         if (strcmp(first, "STOP") == 0) {
+#ifdef ESP_PLATFORM
+            leg_can_disarm();
+#endif
             for (int i = 0; i < MOTOR_COUNT; ++i) control_stop(&g_motors[i]);
             printf("ACK,STOP,0.000,0\n");
             return;
@@ -1899,6 +2099,11 @@ void app_main(void)
     encoder_init();
     current_sense_init();
     serial_command_init();
+#ifdef ESP_PLATFORM
+    g_can_ready = leg_can_init();
+    printf("CAN,%s,0x%03X,500000\n", g_can_ready ? "READY" : "ERROR",
+           LEG_CAN_COMMAND_ID(CAN_LEG_ID));
+#endif
 
     BaseType_t created = xTaskCreatePinnedToCore(adc_sample_task,
                             "adc_sample_task",

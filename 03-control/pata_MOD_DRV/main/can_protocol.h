@@ -1,0 +1,17 @@
+#pragma once
+
+#define LEG_CAN_STOP_ID 0x0FF
+#define LEG_CAN_COMMAND_ID(leg) (0x100 + (leg))
+#define LEG_CAN_REPLY_ID(leg) (0x200 + (leg))
+#define LEG_CAN_AXIS_MASK 0x07
+#define LEG_CAN_POSITION_DLC 7
+#define LEG_CAN_MAX_OFFSET_MRAD 50
+#define LEG_CAN_TIMEOUT_US 300000
+
+enum {
+    LEG_CAN_PONG = 0,
+    LEG_CAN_ACCEPTED,
+    LEG_CAN_DISARMED,
+    LEG_CAN_REJECTED,
+    LEG_CAN_STOPPED,
+};

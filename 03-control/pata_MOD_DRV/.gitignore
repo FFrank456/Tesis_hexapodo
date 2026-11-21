@@ -20,6 +20,7 @@
 **/build/
 build/
 build-codex/
+build_can/
 *.o
 *.a
 *.out
