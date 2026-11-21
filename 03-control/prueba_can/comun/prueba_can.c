@@ -17,9 +17,13 @@
 #include <ctype.h>
 #include <fcntl.h>
 #include <inttypes.h>
+#include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+
+#include "can_protocol.h"
 
 #include "driver/twai.h"
 #include "esp_rom_sys.h"
@@ -56,6 +60,16 @@ static uint32_t s_seq;
 static uint32_t s_tx_ok, s_tx_fallo, s_rx;
 static int64_t s_ultimo_print;
 static uint32_t s_omitidos;
+
+/* Maestra: estado de la pata segun su ultimo ESTADO. */
+#define LATIDO_US        100000    /* ESTADO cada 100 ms mientras la pata este armada */
+#define POS_PRINT_US     500000    /* posicion cada 0.5 s mientras algo se mueve */
+#define LLEGADA_MAX_US   15000000  /* aviso si no llega en 15 s */
+static const char *const k_art[3] = {"coxa", "femur", "tibia"};
+static bool s_armada;
+static int64_t s_ultimo_latido, s_orden_t, s_ultimo_pos_print;
+static uint8_t s_pendientes, s_flags, s_latidos_fallidos;
+static int16_t s_pos_mrad[3];
 
 /* ---------- textos ---------- */
 
@@ -97,7 +111,21 @@ static const char *nombre_respuesta(uint8_t c)
     case RESP_DESARMADA: return "DESARMADA";
     case RESP_RECHAZADA: return "RECHAZADA";
     case RESP_DETENIDA:  return "DETENIDA";
+    case LEG_CAN_STATUS: return "ESTADO";
     default:             return "DESCONOCIDA";
+    }
+}
+
+static const char *nombre_motivo(uint8_t m)
+{
+    switch (m) {
+    case LEG_CAN_REASON_FORMAT:      return "formato de orden invalido";
+    case LEG_CAN_REASON_RANGE:       return "angulo fuera del rango de la articulacion";
+    case LEG_CAN_REASON_NFAULT:      return "el driver de esa articulacion esta en falla (nFAULT)";
+    case LEG_CAN_REASON_NOT_STOPPED: return "la articulacion no esta parada";
+    case LEG_CAN_REASON_ARMED:       return "la pata ya esta armada (desarma con 'd')";
+    case LEG_CAN_REASON_CONTROL:     return "el control no arranco o cambio el cero del encoder";
+    default:                         return "?";
     }
 }
 
@@ -121,7 +149,7 @@ static void explicar_fallo_tx(tx_res_t r)
 
 static void ayuda(void)
 {
-    puts("COMANDOS (una tecla, sin Enter):");
+    puts("COMANDOS (escribe y pulsa Enter):");
     puts("  h  esta ayuda");
     puts("  s  estado del controlador y contadores");
     puts("  r  medir CRX en reposo durante 100 ms (debe quedar en 1)");
@@ -133,7 +161,14 @@ static void ayuda(void)
         puts("  p  ping a la pata (0x10x) y espera PONG (0x20x)");
         puts("  b  rafaga de 1000 pings: perdidas y tiempo de ida y vuelta");
         puts("  k  PARO general 0x0FF y espera DETENIDA");
-        puts("  m  mueve femur y tibia por CAN +-50 mrad (antes CAN,ARM en la pata)");
+        puts("MOVIMIENTO (con el firmware real pata_MOD_DRV; primero 'n'):");
+        puts("  a            armar la pata (todas las articulaciones paradas)");
+        puts("  f 0.5        femur a 0.5 rad      t -0.3   tibia a -0.3 rad");
+        puts("  c 0.2        coxa a 0.2 rad       ft 0.3 -0.2   femur y tibia a la vez");
+        puts("  e            estado: posiciones, nFAULT, armada");
+        puts("  d            desarmar (suelta las articulaciones)");
+        puts("  cero f|t|c|todo   el encoder vale 0 en la pose actual (desarmada)");
+        puts("  Rangos: coxa -0.5..1.5, femur -1..1, tibia -1..0.7 rad (respecto del cero)");
     } else {
         puts("  p  envia una trama 0x20x con un contador hacia la maestra");
     }
@@ -312,23 +347,32 @@ static void procesar_rx(const twai_message_t *f)
         printf("  -> respuesta %s\n", nombre_respuesta(f->data[0]));
 }
 
-/* La maestra espera la respuesta de su pata; las demas tramas se procesan normal. */
-static bool esperar_respuesta(uint8_t *codigo, int64_t *t_llegada)
+/* La maestra espera la respuesta de su pata (trama completa); las demas tramas
+ * se procesan normal. */
+static bool esperar_trama(twai_message_t *out, int64_t *t_llegada)
 {
     int64_t limite = esp_timer_get_time() + ESPERA_RESP_US;
     twai_message_t f;
     while (esp_timer_get_time() < limite) {
         if (twai_receive(&f, ESPERA(5)) != ESP_OK) continue;
         if (!f.extd && !f.rtr && f.identifier == ID_RESPUESTA(s_cfg->pata_id) &&
-            f.data_length_code == 1) {
+            f.data_length_code >= 1) {
             *t_llegada = esp_timer_get_time();
-            *codigo = f.data[0];
+            *out = f;
             s_rx++;
             return true;
         }
         procesar_rx(&f);
     }
     return false;
+}
+
+static bool esperar_respuesta(uint8_t *codigo, int64_t *t_llegada)
+{
+    twai_message_t f;
+    if (!esperar_trama(&f, t_llegada)) return false;
+    *codigo = f.data[0];
+    return true;
 }
 
 /* ---------- pruebas ---------- */
@@ -392,6 +436,8 @@ static void ping(void)
 
 static void paro(void)
 {
+    s_armada = false;
+    s_pendientes = 0;
     if (!requiere_normal()) return;
     tx_res_t r = enviar(ID_PARO, NULL, 0, false);
     printf("TX,id=0x%03X,dlc=0 (PARO) -> %s\n", ID_PARO, nombre_tx(r));
@@ -439,64 +485,166 @@ static void rafaga(void)
     estado();
 }
 
-/* Mueve fémur y tibia por CAN (máscara 0x06) con consignas relativas al origen
- * que la pata tomó en CAN,ARM. Límite del protocolo: ±50 mrad. Manda una trama
- * cada 50 ms (la pata se desarma si pasan 300 ms sin consigna). Termina en el
- * origen y con PARO. Cualquier tecla durante el movimiento manda PARO. */
-#define MOVER_MASCARA    0x06
-#define MOVER_PERIODO_US 50000
+/* ---------- maestra: ordenes de movimiento (protocolo v2, can_protocol.h) ---------- */
 
-static bool mover_tramo(int16_t off_m2, int16_t off_m3, int ms, int *aceptadas, uint8_t *fallo)
+/* Envia una orden a la pata y devuelve su respuesta completa. */
+static bool orden(const uint8_t *d, uint8_t len, twai_message_t *resp)
 {
-    uint8_t d[7] = {MOVER_MASCARA, 0, 0,
-                    (uint8_t)(off_m2 & 0xFF), (uint8_t)((uint16_t)off_m2 >> 8),
-                    (uint8_t)(off_m3 & 0xFF), (uint8_t)((uint16_t)off_m3 >> 8)};
-    int64_t fin = esp_timer_get_time() + (int64_t)ms * 1000;
-    int64_t siguiente = esp_timer_get_time();
-    while (esp_timer_get_time() < fin) {
-        char c;
-        if (read(STDIN_FILENO, &c, 1) == 1) { *fallo = 0xFE; return false; }
-        tx_res_t r = enviar(ID_ORDEN(s_cfg->pata_id), d, sizeof d, false);
-        if (r != TX_OK) { explicar_fallo_tx(r); *fallo = 0xFD; return false; }
-        uint8_t codigo;
-        int64_t t1;
-        if (!esperar_respuesta(&codigo, &t1)) { *fallo = 0xFC; return false; }
-        if (codigo != RESP_ACEPTADA) { *fallo = codigo; return false; }
-        (*aceptadas)++;
-        siguiente += MOVER_PERIODO_US;
-        int64_t espera = siguiente - esp_timer_get_time();
-        if (espera > 0) vTaskDelay(ESPERA((uint32_t)(espera / 1000)));
+    if (!requiere_normal()) return false;
+    tx_res_t r = enviar(ID_ORDEN(s_cfg->pata_id), d, len, false);
+    if (r != TX_OK) {
+        printf("TX -> %s\n", nombre_tx(r));
+        explicar_fallo_tx(r);
+        return false;
+    }
+    int64_t t1;
+    if (!esperar_trama(resp, &t1)) {
+        puts("FALLA,la pata no respondio en 50 ms");
+        return false;
     }
     return true;
 }
 
-static void mover(void)
+static void imprimir_rechazo(const twai_message_t *r)
+{
+    if (r->data[0] == LEG_CAN_REJECTED)
+        printf("  -> RECHAZADA: %s\n", r->data_length_code >= 2 ? nombre_motivo(r->data[1]) : "?");
+    else
+        printf("  -> %s\n", nombre_respuesta(r->data[0]));
+}
+
+static bool leer_estado(void)
+{
+    uint8_t d[1] = {LEG_CAN_CMD_STATUS};
+    twai_message_t r;
+    if (enviar(ID_ORDEN(s_cfg->pata_id), d, 1, false) != TX_OK) return false;
+    int64_t t1;
+    if (!esperar_trama(&r, &t1) || r.data[0] != LEG_CAN_STATUS || r.data_length_code != LEG_CAN_STATUS_DLC)
+        return false;
+    s_flags = r.data[1];
+    for (int i = 0; i < 3; i++) s_pos_mrad[i] = (int16_t)(r.data[2 + 2*i] | (r.data[3 + 2*i] << 8));
+    return true;
+}
+
+static void imprimir_posiciones(const char *prefijo)
+{
+    printf("%s,coxa=%+.3f,femur=%+.3f,tibia=%+.3f rad", prefijo,
+           s_pos_mrad[0] / 1000.0, s_pos_mrad[1] / 1000.0, s_pos_mrad[2] / 1000.0);
+    for (int i = 0; i < 3; i++)
+        if (s_flags & (1U << (LEG_CAN_STATUS_NFAULT_SHIFT + i))) printf(",nFAULT_%s", k_art[i]);
+    printf(",%s\n", (s_flags & LEG_CAN_STATUS_ARMED_BIT) ? "armada" : "desarmada");
+}
+
+static void estado_pata(void)
 {
     if (!requiere_normal()) return;
-    static const struct { int16_t m2, m3; int ms; } tramos[] = {
-        {0, 0, 1000}, {50, 50, 3000}, {0, 0, 3000}, {-50, -50, 3000}, {0, 0, 3000},
-    };
-    puts("MOVER,femur y tibia por CAN: 0 -> +50 -> 0 -> -50 -> 0 mrad (unos 13 s)");
-    puts("MOVER,la pata debe estar armada con CAN,ARM; cualquier tecla = PARO");
-    twai_clear_receive_queue();
-    int total = 0;
-    bool ok = true;
-    for (size_t i = 0; i < sizeof tramos / sizeof tramos[0] && ok; i++) {
-        int aceptadas = 0;
-        uint8_t fallo = 0;
-        ok = mover_tramo(tramos[i].m2, tramos[i].m3, tramos[i].ms, &aceptadas, &fallo);
-        total += aceptadas;
-        printf("MOVER,tramo=%u,femur_mrad=%d,tibia_mrad=%d,aceptadas=%d", (unsigned)(i + 1),
-               tramos[i].m2, tramos[i].m3, aceptadas);
-        if (ok) putchar('\n');
-        else if (fallo == 0xFE) puts(",cortado por tecla");
-        else if (fallo == 0xFD) puts(",fallo de TX");
-        else if (fallo == 0xFC) puts(",la pata no respondio en 50 ms");
-        else printf(",la pata respondio %s\n", nombre_respuesta(fallo));
+    if (leer_estado()) imprimir_posiciones("ESTADO");
+    else puts("FALLA,la pata no respondio a ESTADO");
+}
+
+static void armar(void)
+{
+    uint8_t d[1] = {LEG_CAN_CMD_ARM};
+    twai_message_t r;
+    if (!orden(d, 1, &r)) return;
+    if (r.data[0] == LEG_CAN_ACCEPTED) {
+        s_armada = true;
+        s_pendientes = 0;
+        s_latidos_fallidos = 0;
+        s_ultimo_latido = esp_timer_get_time();
+        puts("ARMADA: la pata acepta movimientos. Mando ESTADO cada 100 ms como latido;");
+        puts("  si la maestra se calla 0,5 s, la pata suelta las articulaciones.");
+        if (leer_estado()) imprimir_posiciones("ESTADO");
+    } else {
+        imprimir_rechazo(&r);
     }
-    printf("MOVER,fin,consignas_aceptadas=%d\n", total);
-    puts(ok ? "PASA,mover" : "FALLA,mover");
-    paro();
+}
+
+static void desarmar(void)
+{
+    uint8_t d[1] = {LEG_CAN_CMD_DISARM};
+    twai_message_t r;
+    s_armada = false;
+    s_pendientes = 0;
+    if (orden(d, 1, &r)) printf("DESARMAR -> %s (articulaciones sueltas)\n", nombre_respuesta(r.data[0]));
+}
+
+/* mask: bit0 coxa, bit1 femur, bit2 tibia. rad[i] solo cuenta si su bit esta en mask. */
+static void ir_a(uint8_t mask, const float rad[3])
+{
+    uint8_t d[LEG_CAN_GOTO_DLC] = {LEG_CAN_CMD_GOTO, mask};
+    printf("IR_A");
+    for (int i = 0; i < 3; i++) {
+        if (!(mask & (1U << i))) continue;
+        long mrad = lroundf(rad[i] * 1000.0f);
+        if (mrad > 32767) mrad = 32767;
+        if (mrad < -32768) mrad = -32768;
+        d[2 + 2*i] = (uint8_t)(mrad & 0xFF);
+        d[3 + 2*i] = (uint8_t)(((uint16_t)(int16_t)mrad) >> 8);
+        printf(",%s=%+.3f", k_art[i], rad[i]);
+    }
+    puts(" rad");
+    twai_message_t r;
+    if (!orden(d, sizeof d, &r)) return;
+    if (r.data[0] == LEG_CAN_ACCEPTED) {
+        puts("  -> ACEPTADA, en camino");
+        s_pendientes |= mask;
+        s_orden_t = s_ultimo_pos_print = esp_timer_get_time();
+    } else {
+        imprimir_rechazo(&r);
+        if (r.data[0] == LEG_CAN_DISARMED) puts("  (primero arma la pata con 'a')");
+    }
+}
+
+static void cero(uint8_t mask)
+{
+    uint8_t d[2] = {LEG_CAN_CMD_ZERO, mask};
+    twai_message_t r;
+    if (!orden(d, 2, &r)) return;
+    if (r.data[0] == LEG_CAN_ACCEPTED) {
+        printf("CERO -> ACEPTADO:");
+        for (int i = 0; i < 3; i++) if (mask & (1U << i)) printf(" %s", k_art[i]);
+        puts(" valen 0 en la pose actual");
+    } else imprimir_rechazo(&r);
+}
+
+/* Latido: con la pata armada, ESTADO cada 100 ms. Avisa llegadas y fallas. */
+static void latido(void)
+{
+    if (!s_armada || s_modo != TWAI_MODE_NORMAL) return;
+    int64_t ahora = esp_timer_get_time();
+    if (ahora - s_ultimo_latido < LATIDO_US) return;
+    s_ultimo_latido = ahora;
+    if (!leer_estado()) {
+        if (++s_latidos_fallidos == 3) puts("AVISO,la pata no responde al latido (3 seguidos)");
+        return;
+    }
+    s_latidos_fallidos = 0;
+    if (!(s_flags & LEG_CAN_STATUS_ARMED_BIT)) {
+        s_armada = false;
+        s_pendientes = 0;
+        imprimir_posiciones("AVISO,la pata se desarmo (PARO, timeout, STOP por serie o falla)");
+        return;
+    }
+    for (int i = 0; i < 3; i++) {
+        uint8_t b = (uint8_t)(1U << i);
+        if (!(s_pendientes & b)) continue;
+        if (s_flags & (1U << (LEG_CAN_STATUS_NFAULT_SHIFT + i))) {
+            printf("AVISO,nFAULT en %s\n", k_art[i]);
+            s_pendientes &= (uint8_t)~b;
+        } else if (ahora - s_orden_t > 200000 && (s_flags & (1U << (LEG_CAN_STATUS_ARRIVED_SHIFT + i)))) {
+            printf("LLEGO,%s,%+.3f rad,%.1f s\n", k_art[i], s_pos_mrad[i] / 1000.0,
+                   (ahora - s_orden_t) / 1e6);
+            s_pendientes &= (uint8_t)~b;
+        } else if (ahora - s_orden_t > LLEGADA_MAX_US) {
+            printf("AVISO,%s no llego en 15 s (esta en %+.3f rad)\n", k_art[i], s_pos_mrad[i] / 1000.0);
+            s_pendientes &= (uint8_t)~b;
+        }
+    }
+    if (s_pendientes && ahora - s_ultimo_pos_print >= POS_PRINT_US) {
+        s_ultimo_pos_print = ahora;
+        imprimir_posiciones("POS");
+    }
 }
 
 static void enviar_contador(void)
@@ -514,8 +662,6 @@ static void enviar_contador(void)
 
 static void comando(char c)
 {
-    /* Separa la salida de cada comando y muestra que tecla llego. */
-    if (c != '\r' && c != '\n' && c != ' ') printf("\n>> %c\n", c);
     switch (tolower((unsigned char)c)) {
     case 'h': ayuda(); break;
     case 's': estado(); break;
@@ -527,10 +673,58 @@ static void comando(char c)
     case 'p': if (s_cfg->es_maestra) ping(); else enviar_contador(); break;
     case 'b': if (s_cfg->es_maestra) rafaga(); else puts("AVISO,'b' es solo de la maestra"); break;
     case 'k': if (s_cfg->es_maestra) paro(); else puts("AVISO,'k' es solo de la maestra"); break;
-    case 'm': if (s_cfg->es_maestra) mover(); else puts("AVISO,'m' es solo de la maestra"); break;
+    case 'a': if (s_cfg->es_maestra) armar(); else puts("AVISO,'a' es solo de la maestra"); break;
+    case 'd': if (s_cfg->es_maestra) desarmar(); else puts("AVISO,'d' es solo de la maestra"); break;
+    case 'e': if (s_cfg->es_maestra) estado_pata(); else puts("AVISO,'e' es solo de la maestra"); break;
     case '\r': case '\n': case ' ': break;
     default: printf("AVISO,comando '%c' desconocido; 'h' para ayuda\n", c); break;
     }
+}
+
+/* "f 0.5" femur, "t -0.3" tibia, "c 0.2" coxa, "ft 0.3 -0.2" femur y tibia,
+ * "cero f|t|c|todo"; una sola letra = comando de prueba. */
+static int articulacion(const char *w)
+{
+    if (!strcmp(w, "c") || !strcmp(w, "coxa")) return 0;
+    if (!strcmp(w, "f") || !strcmp(w, "femur")) return 1;
+    if (!strcmp(w, "t") || !strcmp(w, "tibia")) return 2;
+    return -1;
+}
+
+static bool leer_rad(const char *s, float *v)
+{
+    char *fin = NULL;
+    if (!s) return false;
+    *v = strtof(s, &fin);
+    return fin != s && *fin == '\0' && isfinite(*v);
+}
+
+static void procesar_linea(char *l)
+{
+    for (char *p = l; *p; p++) *p = (char)tolower((unsigned char)*p);
+    printf(">> %s\n", l);
+    char *w = strtok(l, " ,"), *x = strtok(NULL, " ,"), *y = strtok(NULL, " ,");
+    if (!w) return;
+    if (!x && strlen(w) == 1) { comando(w[0]); return; }
+    if (!s_cfg->es_maestra) { puts("AVISO,la pata solo acepta comandos de una letra"); return; }
+
+    float rad[3] = {0, 0, 0};
+    int j = articulacion(w);
+    if (!strcmp(w, "armar")) armar();
+    else if (!strcmp(w, "desarmar")) desarmar();
+    else if (!strcmp(w, "estado")) estado_pata();
+    else if (!strcmp(w, "cero")) {
+        int k = x ? articulacion(x) : -1;
+        if (!x || !strcmp(x, "todo")) cero(LEG_CAN_AXIS_MASK);
+        else if (k >= 0) cero((uint8_t)(1U << k));
+        else puts("AVISO,uso: cero f | cero t | cero c | cero todo");
+    } else if (!strcmp(w, "ft")) {
+        if (leer_rad(x, &rad[1]) && leer_rad(y, &rad[2])) ir_a(0x06, rad);
+        else puts("AVISO,uso: ft <femur_rad> <tibia_rad>");
+    } else if (j >= 0) {
+        if (leer_rad(x, &rad[j]) && !y) ir_a((uint8_t)(1U << j), rad);
+        else printf("AVISO,uso: %s <angulo_rad>, por ejemplo %s 0.5\n", w, w);
+    } else printf("AVISO,orden '%s' desconocida; 'h' para ayuda\n", w);
 }
 
 void prueba_can_ejecutar(const prueba_can_cfg_t *cfg)
@@ -547,6 +741,8 @@ void prueba_can_ejecutar(const prueba_can_cfg_t *cfg)
     estado();
     ayuda();
 
+    char linea[48];
+    size_t n = 0;
     while (true) {
         twai_message_t f;
         if (s_instalado && twai_receive(&f, ESPERA(5)) == ESP_OK) procesar_rx(&f);
@@ -554,8 +750,19 @@ void prueba_can_ejecutar(const prueba_can_cfg_t *cfg)
 
         uint32_t a;
         if (s_instalado && twai_read_alerts(&a, 0) == ESP_OK) procesar_alertas(a);
+        if (s_cfg->es_maestra) latido();
 
+        /* Las ordenes se escriben y se confirman con Enter. */
         char c;
-        for (int i = 0; i < 8 && read(STDIN_FILENO, &c, 1) == 1; i++) comando(c);
+        for (int i = 0; i < 16 && read(STDIN_FILENO, &c, 1) == 1; i++) {
+            if (c == '\r' || c == '\n') {
+                if (n) { linea[n] = '\0'; putchar('\n'); procesar_linea(linea); n = 0; }
+            } else if ((c == '\b' || c == 0x7F) && n) {
+                n--; fputs("\b \b", stdout);
+            } else if (isprint((unsigned char)c) && n < sizeof linea - 1) {
+                linea[n++] = c; putchar(c);   /* eco: el monitor no muestra lo que se escribe */
+            }
+            fflush(stdout);
+        }
     }
 }

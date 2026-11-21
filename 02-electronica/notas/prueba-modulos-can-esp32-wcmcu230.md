@@ -235,6 +235,20 @@ Firmware de `03-control/prueba_can/` (ESP-IDF 5.4.4, el mismo protocolo que `pat
 
 Cuando la consigna está a 50 mrad, se mueven y llegan dentro de la tolerancia (20 mrad). Al volver a 0, el error queda en 30 mrad, por debajo de 2 × tolerancia (40 mrad), así que la articulación sigue en HOLD y no corrige. Eso es del lazo de posición, no del CAN: con el límite de ±50 mrad, hacen falta pasos más grandes o una tolerancia menor para que cada paso se note.
 
+**Protocolo v2: la maestra envía ángulos absolutos (21/11/2026).** La pata los ejecuta con su propio control (cascada, PLIMIT 2 rad/s y 5 rad/s², gravedad y fricción). Órdenes: ARMAR, IR_A, ESTADO, CERO y DESARMAR. Latido de 0,5 s (la maestra manda ESTADO cada 100 ms). Rangos: coxa −0.5…1.5, fémur −1…1 y tibia −1…0.7 rad. Detalle en `03-control/prueba_can/README.md`. Fémur y tibia con las ganancias del dashboard y el cero en el fémur horizontal:
+
+| Orden | Llegó a (rad) | Tiempo |
+|---|---|---|
+| `f 0.8` (desde 0.987) | 0.819 | 0.7 s |
+| `f 0.4` | 0.417 | 1.4 s |
+| `f 0` (horizontal) | 0.016 | 1.4 s |
+| `t 0.3` | 0.294 | 0.8 s |
+| `t 0` | 0.016 | 1.1 s |
+| `ft 0.5 0.2` | fémur 0.496 · tibia 0.197 | 1.5 s · 0.8 s |
+| `ft 0.9 0` | fémur 0.911 · tibia −0.002 | 1.1 s · 0.8 s |
+
+7 de 7 órdenes llegaron, con un error ≤ 0.019 rad (tolerancia 0.02). No hubo desarmes por latido. La coxa siguió fuera por el nFAULT del DRVA.
+
 Fallas encontradas por el camino:
 - Una MOD_DRV (COM17) tenía CRX en 0 aunque el pin CRX del módulo daba 3,28 V: la unión J4 pin 4 → IO22 (pin 36 del WROOM) estaba abierta. Resoldarla funcionó, pero se volvió a abrir al mover la placa. Con esa placa conectada, todo el bus quedaba en dominante.
 - El firmware de prueba tenía `pdMS_TO_TICKS(5)` = 0 con FreeRTOS a 100 Hz, lo que hacía saltar el task watchdog. Se corrigió con una espera mínima de 1 tick.

@@ -577,15 +577,39 @@ static bool control_start_position(motor_t *m)
     return true;
 }
 
+static bool has_gravity(const motor_t *m);
+
+/* Caller owns g_motor_lock. New position target (serial PREF and CAN IR_A).
+ * While POSITION is running the axis takes the new target in place; a joint
+ * with gravity keeps holding its current while the loops restart. */
+static void position_take_reference(motor_t *m, double ref)
+{
+    encoder_sample_t enc=encoder_sample(m->index);
+    portENTER_CRITICAL(&g_state_lock);
+    m->position.reference_rad=ref;m->position_reference_id=enc.reference_id;m->position_reference_set=true;
+    position_pi_reset(&m->position);m->position.last_update_us=enc.time_us;
+    if(m->control_mode==CONTROL_MODE_POSITION) {
+        speed_pi_reset(&m->speed);m->speed.reference_rad_s=0;m->speed.last_update_us=enc.time_us;
+        m->speed_current_a=0;
+        if(!has_gravity(m)){pid_reset(&m->pid);m->pid.current_ref_a=0;}
+    }
+    portEXIT_CRITICAL(&g_state_lock);
+    if(m->control_mode==CONTROL_MODE_POSITION && !has_gravity(m))motor_set_output(m, MOTOR_STOP,0);
+}
+
 #ifdef ESP_PLATFORM
+/* CAN protocol v2: see can_protocol.h. All CAN state and the motors it touches
+ * are serialized by g_motor_lock. */
 static bool g_can_ready;
 static bool g_can_armed;
-static uint8_t g_can_active_mask;
-static int64_t g_can_deadline;
-static double g_can_origin[MOTOR_COUNT];
+static uint8_t g_can_active_mask;    /* joints this CAN session put in POSITION */
+static int64_t g_can_deadline;       /* disarm if the master is silent until then */
 static uint32_t g_can_reference_id[MOTOR_COUNT];
+static uint8_t g_can_reason;         /* reason of the last REJECTED */
+static uint32_t g_can_timeouts;
+static const int16_t k_can_min_mrad[MOTOR_COUNT] = LEG_CAN_MIN_MRAD;
+static const int16_t k_can_max_mrad[MOTOR_COUNT] = LEG_CAN_MAX_MRAD;
 
-/* CAN state and motor state are serialized by g_motor_lock. */
 static void leg_can_disarm(void)
 {
     for (int i = 0; i < MOTOR_COUNT; ++i) {
@@ -595,63 +619,107 @@ static void leg_can_disarm(void)
     g_can_armed = false;
 }
 
+static bool motor_stopped_with_encoder(int i)
+{
+    encoder_sample_t enc = encoder_sample(i);
+    return motor_is_stopped(&g_motors[i]) && enc.speed_valid &&
+           isfinite(enc.output_position_rad) && isfinite(enc.output_speed_rad_s) &&
+           fabs(enc.output_speed_rad_s) <= POSITION_STOP_RAD_S;
+}
+
 static bool leg_can_arm(void)
 {
-    if (!g_can_ready || g_can_armed) return false;
     twai_status_info_t status;
-    if (twai_get_status_info(&status) != ESP_OK || status.state != TWAI_STATE_RUNNING) return false;
+    if (!g_can_ready || twai_get_status_info(&status) != ESP_OK ||
+        status.state != TWAI_STATE_RUNNING) { g_can_reason = LEG_CAN_REASON_CONTROL; return false; }
+    if (g_can_armed) { g_can_reason = LEG_CAN_REASON_ARMED; return false; }
     for (int i = 0; i < MOTOR_COUNT; ++i) {
-        encoder_sample_t enc = encoder_sample(i);
-        if (!motor_is_stopped(&g_motors[i]) || !enc.speed_valid ||
-            !isfinite(enc.output_position_rad) || !isfinite(enc.output_speed_rad_s) ||
-            fabs(enc.output_speed_rad_s) > POSITION_STOP_RAD_S) return false;
-        g_can_origin[i] = enc.output_position_rad;
-        g_can_reference_id[i] = enc.reference_id;
+        if (!motor_stopped_with_encoder(i)) { g_can_reason = LEG_CAN_REASON_NOT_STOPPED; return false; }
     }
-    if (twai_clear_receive_queue() != ESP_OK) return false;
+    for (int i = 0; i < MOTOR_COUNT; ++i) g_can_reference_id[i] = encoder_sample(i).reference_id;
+    g_can_active_mask = 0;
     g_can_armed = true;
+    g_can_deadline = esp_timer_get_time() + LEG_CAN_TIMEOUT_US;
     return true;
 }
 
-static uint8_t leg_can_position(const twai_message_t *frame, int64_t now)
+static int16_t frame_i16(const uint8_t *p) { return (int16_t)(p[0] | (p[1] << 8)); }
+static void put_i16(uint8_t *p, int v)
+{
+    if (v > 32767) v = 32767;
+    if (v < -32768) v = -32768;
+    p[0] = (uint8_t)(v & 0xFF);
+    p[1] = (uint8_t)(((uint16_t)v) >> 8);
+}
+
+static uint8_t leg_can_reject(uint8_t reason) { g_can_reason = reason; return LEG_CAN_REJECTED; }
+
+/* IR_A: absolute targets. A joint already moving under CAN takes the new
+ * target in place; a new joint must be stopped and is started in POSITION. */
+static uint8_t leg_can_goto(const twai_message_t *frame)
 {
     if (!g_can_armed) return LEG_CAN_DISARMED;
-    uint8_t mask = frame->data[0];
-    double refs[MOTOR_COUNT];
-    if (!mask || (mask & ~LEG_CAN_AXIS_MASK) ||
-        (g_can_active_mask && mask != g_can_active_mask)) return LEG_CAN_REJECTED;
-
+    uint8_t mask = frame->data[1];
+    if (!mask || (mask & ~LEG_CAN_AXIS_MASK)) return leg_can_reject(LEG_CAN_REASON_FORMAT);
+    double refs[MOTOR_COUNT] = {0};
     for (int i = 0; i < MOTOR_COUNT; ++i) {
         if (!(mask & (1U << i))) continue;
-        int offset = frame->data[1 + 2*i] | (frame->data[2 + 2*i] << 8);
-        if (offset >= 32768) offset -= 65536;
-        if (abs(offset) > LEG_CAN_MAX_OFFSET_MRAD) return LEG_CAN_REJECTED;
-        refs[i] = g_can_origin[i] + offset / 1000.0;
-        motor_t *m = &g_motors[i];
-        if (!position_reference_valid(refs[i]) || m->nfault_low_ms >= DRV_NFAULT_FILTER_MS ||
-            encoder_sample(i).reference_id != g_can_reference_id[i]) {
+        int mrad = frame_i16(&frame->data[2 + 2*i]);
+        if (mrad < k_can_min_mrad[i] || mrad > k_can_max_mrad[i]) return leg_can_reject(LEG_CAN_REASON_RANGE);
+        if (g_motors[i].nfault_low_ms >= DRV_NFAULT_FILTER_MS) return leg_can_reject(LEG_CAN_REASON_NFAULT);
+        if (encoder_sample(i).reference_id != g_can_reference_id[i]) {
             leg_can_disarm();
-            return LEG_CAN_REJECTED;
+            return leg_can_reject(LEG_CAN_REASON_CONTROL);
         }
+        bool active = (g_can_active_mask & (1U << i)) && g_motors[i].control_mode == CONTROL_MODE_POSITION;
+        if (!active && !motor_stopped_with_encoder(i)) return leg_can_reject(LEG_CAN_REASON_NOT_STOPPED);
+        refs[i] = mrad / 1000.0;
     }
-
-    bool starting = g_can_active_mask == 0;
-    g_can_active_mask = mask;
     for (int i = 0; i < MOTOR_COUNT; ++i) {
         if (!(mask & (1U << i))) continue;
         motor_t *m = &g_motors[i];
-        portENTER_CRITICAL(&g_state_lock);
-        m->position.reference_rad = refs[i];
-        m->position_reference_id = g_can_reference_id[i];
-        m->position_reference_set = true;
-        portEXIT_CRITICAL(&g_state_lock);
-        if (starting && !control_start_position(m)) {
-            leg_can_disarm();
-            return LEG_CAN_REJECTED;
+        bool active = (g_can_active_mask & (1U << i)) && m->control_mode == CONTROL_MODE_POSITION;
+        position_take_reference(m, refs[i]);
+        if (!active) {
+            if (!control_start_position(m)) {
+                leg_can_disarm();
+                return leg_can_reject(LEG_CAN_REASON_CONTROL);
+            }
+            g_can_active_mask |= (uint8_t)(1U << i);
         }
     }
-    g_can_deadline = now + LEG_CAN_TIMEOUT_US;
     return LEG_CAN_ACCEPTED;
+}
+
+static uint8_t leg_can_zero(uint8_t mask)
+{
+    if (!mask || (mask & ~LEG_CAN_AXIS_MASK)) return leg_can_reject(LEG_CAN_REASON_FORMAT);
+    if (g_can_armed) return leg_can_reject(LEG_CAN_REASON_ARMED);
+    for (int i = 0; i < MOTOR_COUNT; ++i)
+        if ((mask & (1U << i)) && !motor_is_stopped(&g_motors[i])) return leg_can_reject(LEG_CAN_REASON_NOT_STOPPED);
+    for (int i = 0; i < MOTOR_COUNT; ++i) {
+        if (!(mask & (1U << i))) continue;
+        encoder_zero_reference(i);
+        g_motors[i].position_reference_set = false;
+    }
+    return LEG_CAN_ACCEPTED;
+}
+
+static void leg_can_fill_status(twai_message_t *r)
+{
+    uint8_t flags = g_can_armed ? LEG_CAN_STATUS_ARMED_BIT : 0;
+    for (int i = 0; i < MOTOR_COUNT; ++i) {
+        const motor_t *m = &g_motors[i];
+        if (m->control_mode == CONTROL_MODE_POSITION && m->position.state == POSITION_HOLD)
+            flags |= (uint8_t)(1U << (LEG_CAN_STATUS_ARRIVED_SHIFT + i));
+        if (m->nfault_low_ms >= DRV_NFAULT_FILTER_MS)
+            flags |= (uint8_t)(1U << (LEG_CAN_STATUS_NFAULT_SHIFT + i));
+        double pos = encoder_sample(i).output_position_rad;
+        put_i16(&r->data[2 + 2*i], isfinite(pos) ? (int)lround(pos * 1000.0) : 0);
+    }
+    r->data[0] = LEG_CAN_STATUS;
+    r->data[1] = flags;
+    r->data_length_code = LEG_CAN_STATUS_DLC;
 }
 
 static void leg_can_task(void *arg)
@@ -659,16 +727,26 @@ static void leg_can_task(void *arg)
     (void)arg;
     while (true) {
         twai_message_t frame;
+        /* Block until a frame arrives (sub-ms latency); wake every tick to
+         * check the master timeout. */
+        bool received = twai_receive(&frame, 1) == ESP_OK;
         uint32_t alerts = 0;
-        int response = -1;
+        bool respond = false;
+        twai_message_t r = {.identifier = LEG_CAN_REPLY_ID(CAN_LEG_ID), .ss = 1, .data_length_code = 1};
         xSemaphoreTake(g_motor_lock, portMAX_DELAY);
-        bool received = twai_receive(&frame, 0) == ESP_OK;
         twai_read_alerts(&alerts, 0);
         int64_t now = esp_timer_get_time();
-        if (g_can_active_mask && now >= g_can_deadline) leg_can_disarm();
+        if (g_can_armed && now >= g_can_deadline) {
+            leg_can_disarm();
+            g_can_timeouts++;
+            printf("CAN,DISARMED,master_timeout\n");
+        }
         for (int i = 0; i < MOTOR_COUNT; ++i) {
             if ((g_can_active_mask & (1U << i)) &&
-                g_motors[i].control_mode != CONTROL_MODE_POSITION) leg_can_disarm();
+                g_motors[i].control_mode != CONTROL_MODE_POSITION) {
+                leg_can_disarm();
+                printf("CAN,DISARMED,M%d_left_POSITION\n", i + 1);
+            }
         }
         if (alerts & (TWAI_ALERT_BUS_OFF | TWAI_ALERT_RX_QUEUE_FULL)) {
             leg_can_disarm();
@@ -681,22 +759,33 @@ static void leg_can_task(void *arg)
             if (frame.identifier == LEG_CAN_STOP_ID && frame.data_length_code == 0) {
                 leg_can_disarm();
                 for (int i = 0; i < MOTOR_COUNT; ++i) control_stop(&g_motors[i]);
-                response = LEG_CAN_STOPPED;
+                r.data[0] = LEG_CAN_STOPPED;
+                respond = true;
             } else if (frame.identifier == LEG_CAN_COMMAND_ID(CAN_LEG_ID)) {
-                if (frame.data_length_code == 0) response = LEG_CAN_PONG;
-                else if (frame.data_length_code == LEG_CAN_POSITION_DLC)
-                    response = leg_can_position(&frame, now);
-                else response = LEG_CAN_REJECTED;
+                respond = true;
+                if (g_can_armed) g_can_deadline = now + LEG_CAN_TIMEOUT_US;   /* latido */
+                uint8_t dlc = frame.data_length_code, cmd = dlc ? frame.data[0] : 0;
+                if (dlc == 0) r.data[0] = LEG_CAN_PONG;
+                else if (cmd == LEG_CAN_CMD_ARM && dlc == 1)
+                    r.data[0] = leg_can_arm() ? LEG_CAN_ACCEPTED : LEG_CAN_REJECTED;
+                else if (cmd == LEG_CAN_CMD_GOTO && dlc == LEG_CAN_GOTO_DLC)
+                    r.data[0] = leg_can_goto(&frame);
+                else if (cmd == LEG_CAN_CMD_STATUS && dlc == 1)
+                    leg_can_fill_status(&r);
+                else if (cmd == LEG_CAN_CMD_ZERO && dlc == 2)
+                    r.data[0] = leg_can_zero(frame.data[1]);
+                else if (cmd == LEG_CAN_CMD_DISARM && dlc == 1) {
+                    leg_can_disarm();
+                    r.data[0] = LEG_CAN_STOPPED;
+                } else r.data[0] = leg_can_reject(LEG_CAN_REASON_FORMAT);
+                if (r.data[0] == LEG_CAN_REJECTED) {
+                    r.data[1] = g_can_reason;
+                    r.data_length_code = 2;
+                }
             }
         }
         xSemaphoreGive(g_motor_lock);
-        if (response >= 0) {
-            twai_message_t reply_frame = {.identifier = LEG_CAN_REPLY_ID(CAN_LEG_ID),
-                                          .ss = 1, .data_length_code = 1};
-            reply_frame.data[0] = response;
-            twai_transmit(&reply_frame, 0);
-        }
-        if (!received) vTaskDelay(1);
+        if (respond) twai_transmit(&r, 0);
     }
 }
 
@@ -723,9 +812,11 @@ static void leg_can_print_status(void)
         return;
     }
     printf("CAN,STATUS,state=%d,rx_pin=%d,tx_errors=%lu,rx_errors=%lu,bus_errors=%lu,"
-           "rx_missed=%lu\n", (int)status.state, gpio_get_level(CAN_RX_GPIO),
+           "rx_missed=%lu,armed=%d,active_mask=0x%02X,timeouts=%lu,last_reason=%u\n",
+           (int)status.state, gpio_get_level(CAN_RX_GPIO),
            (unsigned long)status.tx_error_counter, (unsigned long)status.rx_error_counter,
-           (unsigned long)status.bus_error_count, (unsigned long)status.rx_missed_count);
+           (unsigned long)status.bus_error_count, (unsigned long)status.rx_missed_count,
+           g_can_armed ? 1 : 0, g_can_active_mask, (unsigned long)g_can_timeouts, g_can_reason);
 }
 #endif
 
@@ -1628,18 +1719,7 @@ static void handle_motor_command(motor_t *m, char *command)
         if(!value || end==value || *end || !position_reference_valid(ref) || strtok(NULL,",")) {
             reply("ERR,PREF,expected_rad_within_10000\n");return;
         }
-        encoder_sample_t enc=encoder_sample(m->index);
-        portENTER_CRITICAL(&g_state_lock);
-        m->position.reference_rad=ref;m->position_reference_id=enc.reference_id;m->position_reference_set=true;
-        position_pi_reset(&m->position);m->position.last_update_us=enc.time_us;
-        if(m->control_mode==CONTROL_MODE_POSITION) {
-            speed_pi_reset(&m->speed);m->speed.reference_rad_s=0;m->speed.last_update_us=enc.time_us;
-            m->speed_current_a=0;
-            /* With GRAV keep holding the link while the new target is taken. */
-            if(!has_gravity(m)){pid_reset(&m->pid);m->pid.current_ref_a=0;}
-        }
-        portEXIT_CRITICAL(&g_state_lock);
-        if(m->control_mode==CONTROL_MODE_POSITION && !has_gravity(m))motor_set_output(m, MOTOR_STOP,0);
+        position_take_reference(m, ref);
         reply("ACK,PREF,%.6f\n",ref);return;
     }
     /* PPI / PLIMIT are accepted while POSITION is active (bumpless: the

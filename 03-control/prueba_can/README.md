@@ -8,13 +8,38 @@ Prueba la comunicación CAN de la Unidad 2 en pasos cortos. Cada paso prueba una
 | `maestra_s3/` | ESP32-S3 DevKitC-1 | Proyecto ESP-IDF de la maestra: TX = GPIO4, RX = GPIO5. Consola por el conector **USB** (no el UART). |
 | `pata_mod_drv/` | MOD_DRV | Proyecto ESP-IDF de la pata 1: TX = IO21, RX = IO22. Consola por el USB-C. Pone a 0 las 6 entradas de los DRV8876. |
 
-Protocolo: es el mismo que usa `../pata_MOD_DRV/main/can_protocol.h`, a 500 kbit/s.
+## Protocolo (v2, 21-nov)
 
-| ID | Sentido | Datos | Respuesta |
-|---|---|---|---|
-| `0x101` | maestra → pata 1 | vacío (ping) | `0x201` con `00` = PONG |
-| `0x0FF` | maestra → todas | vacío (PARO) | `0x201` con `04` = DETENIDA |
-| `0x201` | pata 1 → maestra | 4 bytes de contador (solo en esta prueba, tecla `p` de la pata) | — |
+Lo define `../pata_MOD_DRV/main/can_protocol.h`, y la maestra compila con ese mismo archivo. Funciona a 500 kbit/s con ID estándar.
+
+**Idea:** la maestra solo dice **adónde** ir. La pata hace todo el movimiento con su propio control: cascada, trayectoria PLIMIT, gravedad, fricción y dither, igual que *Ir a posición* en el dashboard.
+
+| ID | Sentido | Para qué |
+|---|---|---|
+| `0x0FF` | maestra → todas | PARO general (vacío). Responde DETENIDA |
+| `0x101` | maestra → pata 1 | Órdenes (el primer byte dice cuál) |
+| `0x201` | pata 1 → maestra | Respuestas (el primer byte dice cuál) |
+
+| Orden (`0x101`) | Bytes | Respuesta |
+|---|---|---|
+| PING / latido | vacío | `00` PONG |
+| ARMAR | `01` | `01` ACEPTADA o `03 motivo` RECHAZADA |
+| IR_A | `02 máscara cL cH fL fH tL tH`: ángulo **absoluto** en mrad (int16, byte bajo primero). Máscara: bit0 coxa, bit1 fémur, bit2 tibia | ACEPTADA, RECHAZADA o `02` DESARMADA |
+| ESTADO | `03` | `05 flags cL cH fL fH tL tH`: posición actual en mrad. Flags: bit0–2 llegó, bit3–5 nFAULT, bit6 armada |
+| CERO | `04 máscara`: el encoder vale 0 en la pose actual (solo desarmada) | ACEPTADA o RECHAZADA |
+| DESARMAR | `05` | `04` DETENIDA |
+
+Ejemplo: "fémur a 0.5 rad" se envía como `02 02 00 00 F4 01 00 00` (`0x01F4` = 500 mrad).
+
+**Motivos de RECHAZADA:** 1 formato, 2 fuera de rango, 3 nFAULT, 4 no está parada, 5 ya armada, 6 el control no arrancó o cambió el cero.
+
+**Seguridad:**
+- **Rangos** respecto del cero del encoder: coxa −0.5…1.5, fémur −1…1 y tibia −1…0.7 rad. Son los del dashboard.
+- **Latido:** con la pata armada, si pasan **0,5 s sin ninguna orden** de la maestra, la pata suelta las articulaciones. La maestra manda ESTADO cada 100 ms automáticamente.
+- Mientras la pata está armada, rechaza los comandos serie de motor, como las ganancias del dashboard. `STOP` por serie la desarma.
+- **El cero importa:** el firmware pone el cero del encoder donde esté la pata al arrancar. La gravedad calibrada supone el cero con el **fémur horizontal y la tibia alineada con él**. Pon la pata así y usa `cero todo` (o *Cero los 3* en el dashboard) antes de armar.
+
+Solo el firmware de prueba de la pata (`pata_mod_drv/`) envía además `0x201` con 4 bytes de contador (tecla `p`).
 
 Las dos placas arrancan en modo **ESCUCHA**: en ese modo no transmiten ni dan ACK. Solo usan el bus después de pulsar `n`.
 
@@ -49,7 +74,7 @@ idf.py -p COM16 flash monitor
 
 Si la carga falla con `ninja: failed recompaction: Permission denied`, la extensión de VS Code tiene bloqueada la carpeta `build` y la placa se queda con el firmware anterior, aunque parezca que cargó. Compila y carga en una carpeta aparte con `idf.py -B build_cli -p COMx flash monitor`. La carga es correcta solo si al final aparece `Hash of data verified`.
 
-La primera compilación tarda de 3 a 5 minutos y las siguientes, segundos. Usa una terminal para cada placa para ver los dos monitores al mismo tiempo. Los comandos son **una tecla, sin Enter**, y se sale del monitor con `Ctrl+]`. Si aparece "Acceso denegado", el dashboard u otro monitor tiene el puerto abierto.
+La primera compilación tarda de 3 a 5 minutos y las siguientes, segundos. Usa una terminal para cada placa para ver los dos monitores al mismo tiempo. Los comandos se **escriben y se confirman con Enter**, y se sale del monitor con `Ctrl+]`. Si aparece "Acceso denegado", el dashboard u otro monitor tiene el puerto abierto.
 
 ## Comandos
 
@@ -65,7 +90,21 @@ La primera compilación tarda de 3 a 5 minutos y las siguientes, segundos. Usa u
 | `p` | pata | Envía un contador a la maestra |
 | `b` | maestra | Ráfaga de 1000 pings: pérdidas y tiempo de ida y vuelta |
 | `k` | maestra | PARO general `0x0FF` |
-| `m` | maestra | Mueve fémur y tibia por CAN contra el firmware real `pata_MOD_DRV`: 0 → +50 → 0 → −50 → 0 mrad, una consigna cada 50 ms, y PARO al final. Antes hay que mandar `CAN,ARM` por serie a la pata |
+
+Comandos de movimiento de la maestra, contra el firmware real `pata_MOD_DRV`. Antes hay que poner la maestra en NORMAL con `n`:
+
+| Comando | Qué hace |
+|---|---|
+| `a` | Armar la pata. Las tres articulaciones tienen que estar paradas |
+| `f 0.5` | Fémur a 0.5 rad |
+| `t -0.3` | Tibia a −0.3 rad |
+| `c 0.2` | Coxa a 0.2 rad |
+| `ft 0.3 -0.2` | Fémur y tibia a la vez |
+| `e` | Estado: posiciones, nFAULT y si está armada |
+| `d` | Desarmar: suelta las articulaciones |
+| `cero f` / `cero t` / `cero c` / `cero todo` | El encoder vale 0 en la pose actual (con la pata desarmada) |
+
+Mientras algo se mueve, la maestra imprime `POS,...` cada 0,5 s y `LLEGO,femur,+0.498 rad,1.4 s` cuando la articulación llega. Se puede enviar un objetivo nuevo en pleno movimiento.
 
 ## Secuencia de prueba
 
@@ -163,4 +202,11 @@ Anota en la nota de la tesis cuántas tramas se perdieron y el tiempo de ida y v
 
 Carga en la MOD_DRV el firmware de control de `../pata_MOD_DRV` y deja el S3 con esta prueba. En el monitor de la pata debe aparecer `CAN,READY,0x101,500000`.
 
-En la maestra, pulsa `n` y después `p`: debe responder `PONG`, porque el firmware real atiende el mismo ping. Pulsa `k` y debe responder `DETENIDA`. Con esto se comprueba que la maestra puede hablar con el control real de la pata. Los comandos de posición por CAN (`CAN,ARM` y tramas de 7 bytes) quedan para una prueba posterior, con motores conectados.
+En la maestra, pulsa `n` y después `p`: debe responder `PONG`, porque el firmware real atiende el mismo ping. Pulsa `k` y debe responder `DETENIDA`. Con esto se comprueba que la maestra puede hablar con el control real de la pata.
+
+### Paso 8. Mover la pata desde la maestra
+
+1. Con el dashboard, envía las ganancias de cada articulación (*Enviar al ESP32*), porque se pierden al reiniciar. Después cierra el dashboard o desconéctalo.
+2. Pon el fémur horizontal y la tibia alineada con él. En la maestra: `n`, `cero todo` y `e`, que debe dar 0 en las tres.
+3. Enciende V_MOT. Después `a` para armar, `f -0.3` para que el fémur suba 0.3 rad (el encoder negativo lo sube), `t 0.3`, `ft 0 0`.
+4. `d` para soltar. Ojo: al desarmar, el fémur queda sin fuerza y cae.
