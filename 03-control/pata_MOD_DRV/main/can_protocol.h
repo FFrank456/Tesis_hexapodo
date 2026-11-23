@@ -23,6 +23,7 @@
  *                                                           -> ACEPTADA | RECHAZADA
  *   [05]                        DESARMAR: suelta las articulaciones (como PARO,
  *                               pero solo esta pata).        -> DETENIDA
+ *   [06]                        IDENT: quien eres             -> [06 mac0..mac5]
  *
  * Respuestas (0x200 + pata):
  *   [00] PONG   [01] ACEPTADA   [02] DESARMADA   [04] DETENIDA
@@ -31,6 +32,9 @@
  *       bit0-2  la articulacion llego (POSITION en HOLD)
  *       bit3-5  nFAULT del driver
  *       bit6    pata armada
+ *
+ * ID de pata: 1..6, se asigna por serie con CAN,ID,n y se guarda en NVS. Una
+ * placa sin ID (0) no atiende ordenes; solo obedece PARO, sin responder.
  *
  * Seguridad: armada, la pata se desarma (y suelta las articulaciones) si pasan
  * LEG_CAN_TIMEOUT_US sin ninguna orden de la maestra. La maestra manda ESTADO
@@ -42,6 +46,7 @@
 #define LEG_CAN_COMMAND_ID(leg) (0x100 + (leg))
 #define LEG_CAN_REPLY_ID(leg) (0x200 + (leg))
 #define LEG_CAN_AXIS_MASK 0x07
+#define LEG_CAN_MAX_LEGS 6
 #define LEG_CAN_TIMEOUT_US 500000
 
 /* Codigos de orden (byte 0). */
@@ -51,9 +56,11 @@ enum {
     LEG_CAN_CMD_STATUS = 3,
     LEG_CAN_CMD_ZERO = 4,
     LEG_CAN_CMD_DISARM = 5,
+    LEG_CAN_CMD_IDENT = 6,
 };
 #define LEG_CAN_GOTO_DLC 8
 #define LEG_CAN_STATUS_DLC 8
+#define LEG_CAN_IDENT_DLC 7
 
 /* Codigos de respuesta (byte 0). */
 enum {
@@ -63,6 +70,7 @@ enum {
     LEG_CAN_REJECTED,
     LEG_CAN_STOPPED,
     LEG_CAN_STATUS,
+    LEG_CAN_IDENT,
 };
 
 /* Motivo de RECHAZADA (byte 1). */

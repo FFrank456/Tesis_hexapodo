@@ -31,7 +31,7 @@
 #define MOTOR_COUNT 3
 #define CAN_TX_GPIO 21
 #define CAN_RX_GPIO 22
-#define CAN_LEG_ID 1
+/* El ID de pata (1..6) no se compila: se asigna con CAN,ID,n y vive en NVS. */
 
 /* Motor que reciben los comandos sin prefijo y la telemetria LEGACY al
  * arrancar (0 = Coxa, 1 = Femur, 2 = Tibia). Se cambia en caliente con SEL,1|2|3,

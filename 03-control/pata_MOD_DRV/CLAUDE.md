@@ -68,6 +68,7 @@ Reporte completo del estado del control: `docs/reporte_control_cascada.md`.
 | `INFO`, `DIAG`, `TEL,MULTI` | Información, diagnóstico (ADC, encoder, nFAULT, ride-through) y telemetría a 100 Hz |
 | `NVS,SAVE` | Guarda en la flash las ganancias, límites y compensaciones de los 3 motores (todo lo de CFG, más FMAP, FRICB, DITHER, ESIGN y HOLD). Exige los 3 motores en STOP |
 | `NVS,POSE` · `NVS,POSE,CLEAR` | Guarda o borra la **pose de arranque**: los ángulos actuales, que el encoder toma al encender |
+| `CAN,ID,n` · `CAN,ID` · `CAN,STATUS` | Asigna el ID de pata (1–6; se guarda en NVS y `NVS,ERASE` no lo borra) / lo muestra / estado del bus. Sin ID la placa no atiende órdenes CAN, solo PARO |
 | `NVS,STATUS` · `NVS,ERASE` | Qué hay guardado / borrar todo (al reiniciar vuelven los valores de fábrica) |
 
 La línea `CFG,Mx,...`, unas 3 veces por segundo, trae todos los parámetros. El dashboard la interpreta en `handleCfg`.

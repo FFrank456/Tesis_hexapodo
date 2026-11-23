@@ -30,6 +30,7 @@
 #include "can_protocol.h"
 #include "nvs_flash.h"
 #include "nvs.h"
+#include "esp_mac.h"
 #endif
 
 /*
@@ -603,6 +604,7 @@ static void position_take_reference(motor_t *m, double ref)
 /* CAN protocol v2: see can_protocol.h. All CAN state and the motors it touches
  * are serialized by g_motor_lock. */
 static bool g_can_ready;
+static uint8_t g_can_leg_id;         /* 1..6 from NVS (CAN,ID,n); 0 = unassigned */
 static bool g_can_armed;
 static uint8_t g_can_active_mask;    /* joints this CAN session put in POSITION */
 static int64_t g_can_deadline;       /* disarm if the master is silent until then */
@@ -724,6 +726,13 @@ static void leg_can_fill_status(twai_message_t *r)
     r->data_length_code = LEG_CAN_STATUS_DLC;
 }
 
+static bool leg_can_frame_is_mine(const twai_message_t *f)
+{
+    if (f->extd || f->rtr) return false;
+    if (f->identifier == LEG_CAN_STOP_ID) return true;
+    return g_can_leg_id && f->identifier == (uint32_t)LEG_CAN_COMMAND_ID(g_can_leg_id);
+}
+
 static void leg_can_task(void *arg)
 {
     (void)arg;
@@ -732,9 +741,15 @@ static void leg_can_task(void *arg)
         /* Block until a frame arrives (sub-ms latency); wake every tick to
          * check the master timeout. */
         bool received = twai_receive(&frame, 1) == ESP_OK;
+        /* Traffic of the other legs: drop it without taking the motor lock. */
+        for (int n = 0; received && !leg_can_frame_is_mine(&frame) && n < 32; ++n)
+            received = twai_receive(&frame, 0) == ESP_OK;
+        if (received && !leg_can_frame_is_mine(&frame)) received = false;
         uint32_t alerts = 0;
         bool respond = false;
-        twai_message_t r = {.identifier = LEG_CAN_REPLY_ID(CAN_LEG_ID), .ss = 1, .data_length_code = 1};
+        /* Not single-shot: six legs answer a PARO at once and the ones that
+         * lose arbitration must retry. */
+        twai_message_t r = {.identifier = LEG_CAN_REPLY_ID(g_can_leg_id), .data_length_code = 1};
         xSemaphoreTake(g_motor_lock, portMAX_DELAY);
         twai_read_alerts(&alerts, 0);
         int64_t now = esp_timer_get_time();
@@ -762,8 +777,8 @@ static void leg_can_task(void *arg)
                 leg_can_disarm();
                 for (int i = 0; i < MOTOR_COUNT; ++i) control_stop(&g_motors[i]);
                 r.data[0] = LEG_CAN_STOPPED;
-                respond = true;
-            } else if (frame.identifier == LEG_CAN_COMMAND_ID(CAN_LEG_ID)) {
+                respond = g_can_leg_id != 0;
+            } else if (g_can_leg_id && frame.identifier == (uint32_t)LEG_CAN_COMMAND_ID(g_can_leg_id)) {
                 respond = true;
                 if (g_can_armed) g_can_deadline = now + LEG_CAN_TIMEOUT_US;   /* latido */
                 uint8_t dlc = frame.data_length_code, cmd = dlc ? frame.data[0] : 0;
@@ -779,6 +794,12 @@ static void leg_can_task(void *arg)
                 else if (cmd == LEG_CAN_CMD_DISARM && dlc == 1) {
                     leg_can_disarm();
                     r.data[0] = LEG_CAN_STOPPED;
+                } else if (cmd == LEG_CAN_CMD_IDENT && dlc == 1) {
+                    uint8_t mac[6] = {0};
+                    esp_read_mac(mac, ESP_MAC_WIFI_STA);
+                    r.data[0] = LEG_CAN_IDENT;
+                    memcpy(&r.data[1], mac, sizeof mac);
+                    r.data_length_code = LEG_CAN_IDENT_DLC;
                 } else r.data[0] = leg_can_reject(LEG_CAN_REASON_FORMAT);
                 if (r.data[0] == LEG_CAN_REJECTED) {
                     r.data[1] = g_can_reason;
@@ -795,6 +816,7 @@ static bool leg_can_init(void)
 {
     twai_general_config_t config =
         TWAI_GENERAL_CONFIG_DEFAULT(CAN_TX_GPIO, CAN_RX_GPIO, TWAI_MODE_NORMAL);
+    config.rx_queue_len = 32;   /* the bus also carries the other five legs */
     config.alerts_enabled = TWAI_ALERT_BUS_OFF | TWAI_ALERT_BUS_RECOVERED | TWAI_ALERT_RX_QUEUE_FULL;
     twai_timing_config_t timing = TWAI_TIMING_CONFIG_500KBITS();
     twai_filter_config_t filter = TWAI_FILTER_CONFIG_ACCEPT_ALL();
@@ -813,9 +835,9 @@ static void leg_can_print_status(void)
         puts("CAN,STATUS,ERROR");
         return;
     }
-    printf("CAN,STATUS,state=%d,rx_pin=%d,tx_errors=%lu,rx_errors=%lu,bus_errors=%lu,"
+    printf("CAN,STATUS,leg_id=%u,state=%d,rx_pin=%d,tx_errors=%lu,rx_errors=%lu,bus_errors=%lu,"
            "rx_missed=%lu,armed=%d,active_mask=0x%02X,timeouts=%lu,last_reason=%u\n",
-           (int)status.state, gpio_get_level(CAN_RX_GPIO),
+           g_can_leg_id, (int)status.state, gpio_get_level(CAN_RX_GPIO),
            (unsigned long)status.tx_error_counter, (unsigned long)status.rx_error_counter,
            (unsigned long)status.bus_error_count, (unsigned long)status.rx_missed_count,
            g_can_armed ? 1 : 0, g_can_active_mask, (unsigned long)g_can_timeouts, g_can_reason);
@@ -1986,6 +2008,7 @@ static void print_info(void)
  * el encoder empieza en esos valores. Se guarda con NVS,POSE (con el cero ya
  * bien puesto y la pata en esa pose). Todo se carga solo al arrancar. */
 #define NVS_NAMESPACE "pata"
+#define NVS_CAN_NAMESPACE "pata_can"   /* apart: NVS,ERASE keeps the leg ID */
 #define PERSIST_VERSION 1U
 
 typedef struct {
@@ -2095,7 +2118,39 @@ static void nvs_print_pose(const char *tag, const persist_pose_t *p)
     putchar('\n');
 }
 
-/* Boot: config of each motor, then the boot pose. */
+static void leg_id_load(void)
+{
+    nvs_handle_t h;
+    uint8_t id = 0;
+    if (nvs_open(NVS_CAN_NAMESPACE, NVS_READONLY, &h) != ESP_OK) return;
+    if (nvs_get_u8(h, "leg_id", &id) == ESP_OK && id <= LEG_CAN_MAX_LEGS) g_can_leg_id = id;
+    nvs_close(h);
+}
+
+/* CAN,ID (read) | CAN,ID,n (1..6, or 0 = unassigned). Caller owns g_motor_lock. */
+static void leg_id_command(const char *value)
+{
+    if (!value) { printf("CAN,ID,%u\n", g_can_leg_id); return; }
+    if (strlen(value) != 1 || value[0] < '0' || value[0] > '0' + LEG_CAN_MAX_LEGS) {
+        puts("ERR,CAN,ID_expected_1_to_6");
+        return;
+    }
+    if (!g_nvs_ready) { puts("ERR,NVS,not_ready"); return; }
+    if (g_can_armed || !all_motors_stopped()) { puts("ERR,CAN,ID_STOP_first"); return; }
+    uint8_t id = (uint8_t)(value[0] - '0');
+    nvs_handle_t h;
+    esp_err_t e = nvs_open(NVS_CAN_NAMESPACE, NVS_READWRITE, &h);
+    if (e == ESP_OK) {
+        e = nvs_set_u8(h, "leg_id", id);
+        if (e == ESP_OK) e = nvs_commit(h);
+        nvs_close(h);
+    }
+    if (e != ESP_OK) { printf("ERR,CAN,ID,%s\n", esp_err_to_name(e)); return; }
+    g_can_leg_id = id;
+    printf("ACK,CAN,ID,%u\n", id);
+}
+
+/* Boot: leg ID, config of each motor, then the boot pose. */
 static void nvs_load_at_boot(void)
 {
     esp_err_t e = nvs_flash_init();
@@ -2105,6 +2160,7 @@ static void nvs_load_at_boot(void)
     }
     g_nvs_ready = e == ESP_OK;
     if (!g_nvs_ready) { printf("NVS,ERROR,%s\n", esp_err_to_name(e)); return; }
+    leg_id_load();
     int loaded = 0;
     for (int i = 0; i < MOTOR_COUNT; ++i) {
         char key[16];
@@ -2202,8 +2258,10 @@ static void handle_serial_command(char *line)
                 leg_can_print_status();
             } else if (action && strcmp(action, "ARM") == 0 && !strtok(NULL, ",")) {
                 printf(leg_can_arm() ? "ACK,CAN,ARM\n" : "ERR,CAN,ARM_REJECTED\n");
+            } else if (action && strcmp(action, "ID") == 0) {
+                leg_id_command(strtok(NULL, ","));
             } else {
-                printf("ERR,CAN,expected_ARM_or_STATUS\n");
+                printf("ERR,CAN,expected_ARM_STATUS_or_ID\n");
             }
             return;
         }
@@ -2402,7 +2460,8 @@ void app_main(void)
 #ifdef ESP_PLATFORM
     g_can_ready = leg_can_init();
     printf("CAN,%s,0x%03X,500000\n", g_can_ready ? "READY" : "ERROR",
-           LEG_CAN_COMMAND_ID(CAN_LEG_ID));
+           g_can_leg_id ? LEG_CAN_COMMAND_ID(g_can_leg_id) : 0);
+    if (!g_can_leg_id) puts("CAN,NO_ID,asigna_uno_con_CAN,ID,n");
 #endif
 
     BaseType_t created = xTaskCreatePinnedToCore(adc_sample_task,

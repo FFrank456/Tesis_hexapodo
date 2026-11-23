@@ -28,6 +28,9 @@ Lo define `../pata_MOD_DRV/main/can_protocol.h`, y la maestra compila con ese mi
 | ESTADO | `03` | `05 flags cL cH fL fH tL tH`: posición actual en mrad. Flags: bit0–2 llegó, bit3–5 nFAULT, bit6 armada |
 | CERO | `04 máscara`: el encoder vale 0 en la pose actual (solo desarmada) | ACEPTADA o RECHAZADA |
 | DESARMAR | `05` | `04` DETENIDA |
+| IDENT | `06` | `06 mac0…mac5`: la MAC de la placa. Sirve para detectar dos placas con el mismo ID |
+
+**ID de pata (22-nov):** las órdenes de la pata *n* van por `0x100 + n` y sus respuestas por `0x200 + n`, con n de 1 a 6. El ID ya no se compila: se asigna una vez por serie con `CAN,ID,n` (`CAN,ID` lo muestra) y queda en NVS, aparte de las ganancias, así que `NVS,ERASE` no lo borra. Una placa **sin ID** no atiende órdenes; solo obedece el PARO, sin responder.
 
 Ejemplo: "fémur a 0.5 rad" se envía como `02 02 00 00 F4 01 00 00` (`0x01F4` = 500 mrad).
 
@@ -104,7 +107,21 @@ Comandos de movimiento de la maestra, contra el firmware real `pata_MOD_DRV`. An
 | `d` | Desarmar: suelta las articulaciones |
 | `cero f` / `cero t` / `cero c` / `cero todo` | El encoder vale 0 en la pose actual (con la pata desarmada) |
 
+Con varias patas:
+
+| Comando | Qué hace |
+|---|---|
+| `escanear` | Pregunta a los IDs 1–6: `SCAN,n,OK,<MAC>`, `SCAN,n,NO` o `SCAN,n,DUPLICADA` |
+| `p3` | Elige la pata 3; las órdenes siguientes van a ella |
+| `p3 f 0.5` | Elige la pata 3 y le manda la orden |
+| `d todas` | Desarma todas las patas |
+| `k` | PARO a las 6; lista cuáles confirmaron |
+
+La maestra manda el latido a **todas** las patas armadas y no arma ni mueve una pata cuyo ID salió duplicado en el último escaneo.
+
 ### Interfaz web: `maestra_dashboard.html`
+
+El selector de arriba muestra las 6 patas (*responde*, *armada*, *nFAULT*, *ID repetido*, *no responde*). Los controles y la gráfica son de la pata elegida, y cada orden sale con su número de pata.
 
 Ábrela en Chrome o Edge. Pulsa *Conectar maestra* y elige el puerto del S3 (COM4); la interfaz pone sola el bus en NORMAL y pide el estado continuo (`v 1`). Desde ahí puedes:
 

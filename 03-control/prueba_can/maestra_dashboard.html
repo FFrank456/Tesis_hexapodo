@@ -49,6 +49,12 @@ canvas { width: 100%; height: 260px; display: block; background: var(--panel2); 
 textarea { width: 100%; height: 120px; font: 13px/1.4 Consolas, monospace; resize: vertical; }
 #log { height: 220px; overflow: auto; font: 12px/1.35 Consolas, monospace; background: var(--panel2); border-radius: 6px; padding: 6px 8px; white-space: pre-wrap; }
 .l-err { color: var(--err); } .l-ok { color: var(--ok); } .l-tx { color: var(--accent); } .l-warn { color: var(--warn); } .l-mute { color: var(--muted); }
+.legs { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; margin-bottom: 10px; }
+@media (max-width: 800px) { .legs { grid-template-columns: repeat(3, 1fr); } }
+.legs button { text-align: left; padding: 8px 10px; line-height: 1.3; }
+.legs button.sel { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.legs small { display: block; color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.legs .s-ok { color: var(--ok); } .legs .s-warn { color: var(--warn); } .legs .s-err { color: var(--err); }
 .hint { color: var(--muted); font-size: 12px; }
 .legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
 .legend span { display: inline-flex; align-items: center; gap: 5px; }
@@ -58,7 +64,7 @@ textarea { width: 100%; height: 120px; font: 13px/1.4 Consolas, monospace; resiz
 <body>
 <header>
   <h1>Maestra CAN</h1>
-  <span class="sub">ESP32-S3 → pata 1 (MOD_DRV) · protocolo v2</span>
+  <span class="sub">ESP32-S3 → 6 patas MOD_DRV · protocolo v2</span>
   <button class="primary" id="btnConn">Conectar maestra</button>
   <div class="chips" id="chips">
     <span class="chip" id="chConn">Desconectada</span>
@@ -74,10 +80,13 @@ textarea { width: 100%; height: 120px; font: 13px/1.4 Consolas, monospace; resiz
   <div class="warnbox" id="noSerial" style="display:none">Este navegador no tiene Web Serial. Abre esta página en Chrome o Edge.</div>
 
   <section class="card">
-    <h2>Pata</h2>
+    <h2>Patas <button id="btnScan" style="margin-left:auto; font-weight:400">Escanear bus</button></h2>
+    <div class="legs" id="legs"></div>
     <div class="row">
+      <b id="selName">Pata 1:</b>
       <button id="btnArm" class="primary">Armar</button>
       <button id="btnDisarm">Desarmar</button>
+      <button id="btnDisarmAll">Desarmar todas</button>
       <button id="btnZero">Cero de las 3</button>
       <button id="btnStatus">Leer estado</button>
       <span class="hint">Armar exige las tres articulaciones quietas. Al desarmar, el fémur queda sin fuerza y cae.</span>
@@ -137,12 +146,37 @@ const J = [
 const ARRIVED = 0, NFAULT = 3, ARMED_BIT = 0x40;
 const $ = (id) => document.getElementById(id);
 
+const NLEGS = 6;
+const newLeg = () => ({ armed: null, flags: 0, pos: [NaN, NaN, NaN], target: [null, null, null],
+  moving: [false, false, false], lastEst: -1e9, samples: [], arrived: [], scan: "" });
 const st = {
-  port: null, reader: null, writer: null, connected: false,
-  bus: "?", armed: null, flags: 0, pos: [NaN, NaN, NaN], target: [null, null, null],
-  moving: [false, false, false], lastEst: 0, samples: [], pendingTargets: null,
-  arrivedEvents: [], seqRun: false,
+  port: null, reader: null, writer: null, connected: false, bus: "?", sel: 1,
+  legs: Array.from({ length: NLEGS + 1 }, newLeg),   /* índice = ID de pata, 1..6 */
+  pending: null, seqRun: false, seqLeg: 0,
 };
+const L = () => st.legs[st.sel];
+const isFresh = (l) => performance.now() - l.lastEst < 1000;
+
+/* ---------- selector de patas ---------- */
+for (let p = 1; p <= NLEGS; p++) {
+  const bt = document.createElement("button");
+  bt.id = "leg" + p;
+  bt.innerHTML = `<b>Pata ${p}</b><small id="ls${p}">—</small>`;
+  bt.onclick = () => selectLeg(p);
+  $("legs").appendChild(bt);
+}
+function selectLeg(p) {
+  if (st.seqRun) { log("Detén la secuencia antes de cambiar de pata.", "l-warn"); return; }
+  st.sel = p;
+  for (let i = 0; i < 3; i++) {
+    const v = L().target[i] ?? (isFresh(L()) && isFinite(L().pos[i]) ? L().pos[i] : 0);
+    $("in" + i).value = v.toFixed(2); $("sl" + i).value = v;
+  }
+  if (st.connected) send("p" + p, true);
+  render();
+}
+/* Cada orden lleva su pata: así nunca va a otra que la que se ve en pantalla. */
+const sendLeg = (cmd, p = st.sel) => send(`p${p} ${cmd}`);
 
 /* ---------- tarjetas de articulación ---------- */
 J.forEach((j, i) => {
@@ -166,7 +200,7 @@ J.forEach((j, i) => {
   sl.addEventListener("change", () => goJoint(i, +sl.value));
   inp.addEventListener("keydown", (e) => { if (e.key === "Enter") goJoint(i, +inp.value); });
   $("go" + i).onclick = () => goJoint(i, +inp.value);
-  const base = () => (st.target[i] ?? (isFinite(st.pos[i]) ? st.pos[i] : 0));
+  const base = () => (L().target[i] ?? (isFinite(L().pos[i]) ? L().pos[i] : 0));
   $("dm" + i).onclick = () => goJoint(i, base() - 0.1);
   $("dp" + i).onclick = () => goJoint(i, base() + 0.1);
   $("z" + i).onclick = () => goJoint(i, 0);
@@ -211,15 +245,15 @@ async function connect() {
 }
 async function disconnect() {
   st.connected = false; st.seqRun = false;
-  try { await send("v 0", true); } catch (e) {}
+  try { if (st.writer) await send("v 0", true); } catch (e) {}
   try { st.reader && await st.reader.cancel(); } catch (e) {}
   try { st.writer && st.writer.releaseLock(); } catch (e) {}
   try { st.port && await st.port.close(); } catch (e) {}
-  st.port = st.reader = st.writer = null; st.bus = "?"; st.armed = null;
+  st.port = st.reader = st.writer = null; st.bus = "?"; st.legs = st.legs.map(newLeg);
   log("Maestra desconectada.", "l-mute"); render();
 }
 /* Al conectar (o si la maestra se reinicia): estado continuo y bus en NORMAL. */
-function initMaster() { send("v 1", true); send("n", true); }
+function initMaster() { send("v 1", true); send("n", true); send("escanear", true); send("p" + st.sel, true); }
 
 async function readLoop() {
   const dec = new TextDecoder();
@@ -248,41 +282,59 @@ async function readLoop() {
 /* ---------- interpretar lo que dice la maestra ---------- */
 function handleLine(line) {
   if (line.startsWith("EST,")) {
-    const f = line.split(",");
-    if (f.length >= 6) {
-      st.pos = [+f[2] / 1000, +f[3] / 1000, +f[4] / 1000];
-      st.flags = +f[5]; st.armed = !!(st.flags & ARMED_BIT); st.lastEst = performance.now();
+    const f = line.split(","), l = st.legs[+f[2]];
+    if (f.length >= 7 && l) {
       const now = performance.now() / 1000;
-      st.samples.push({ t: now, p: st.pos.slice(), g: st.target.slice() });
-      while (st.samples.length && st.samples[0].t < now - 20) st.samples.shift();
-      if (!st.armed) st.moving = [false, false, false];
+      l.pos = [+f[3] / 1000, +f[4] / 1000, +f[5] / 1000];
+      l.flags = +f[6]; l.armed = !!(l.flags & ARMED_BIT); l.lastEst = performance.now();
+      l.samples.push({ t: now, p: l.pos.slice(), g: l.target.slice() });
+      while (l.samples.length && l.samples[0].t < now - 20) l.samples.shift();
+      if (!l.armed) l.moving = [false, false, false];
     }
-    return;   /* 10 por segundo: no van a la consola */
+    return;   /* 10 por segundo y pata: no van a la consola */
   }
+  if (line.startsWith("PATA,")) return;
   if (/^\s*>> /.test(line) || line.startsWith("STREAM,")) return;   /* eco de los comandos */
   if (line.startsWith("POS,")) return;                                /* ya se ven en las tarjetas */
   let cls = "";
   if (line.startsWith("MODO,")) { st.bus = line.slice(5); cls = "l-mute"; }
   else if (line.includes("=== PRUEBA CAN")) { log("La maestra arrancó: vuelvo a pedir el estado continuo.", "l-warn"); setTimeout(initMaster, 300); }
+  else if (line.startsWith("SCAN,")) {
+    const f = line.split(","), l = st.legs[+f[1]];
+    if (l) { l.scan = f[2]; cls = f[2] === "OK" ? "l-ok" : f[2] === "NO" ? "l-mute" : "l-err"; }
+    else cls = "l-mute";
+  }
   else if (line.startsWith("LLEGO,")) {
-    const f = line.split(","), i = J.findIndex((j) => j.name.toLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu, "") === f[1]);
-    if (i >= 0) { st.moving[i] = false; st.arrivedEvents.push(i); }
+    const f = line.split(","), l = st.legs[+f[1].slice(5)];
+    const i = J.findIndex((j) => j.name.toLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu, "") === f[2]);
+    if (l && i >= 0) { l.moving[i] = false; l.arrived.push(i); }
     cls = "l-ok";
   }
-  else if (line.includes("ACEPTADA")) {
-    if (st.pendingTargets) { st.pendingTargets.forEach((v, i) => { if (v !== null) { st.target[i] = v; st.moving[i] = true; } }); st.pendingTargets = null; }
+  else if (/-> pata \d ACEPTADA/.test(line)) {
+    const p = +line.match(/pata (\d)/)[1];
+    if (st.pending && st.pending.leg === p) {
+      st.pending.t.forEach((v, i) => { if (v !== null) { st.legs[p].target[i] = v; st.legs[p].moving[i] = true; } });
+      st.pending = null;
+    }
     cls = "l-ok";
   }
-  else if (line.includes("RECHAZADA") || line.includes("DESARMADA") || line.startsWith("FALLA") || line.startsWith("ERROR")) {
-    st.pendingTargets = null; cls = "l-err";
-    if (st.seqRun) { st.seqRun = false; log("Secuencia detenida por el error anterior.", "l-err"); }
+  else if (/RECHAZADA|-> pata \d DESARMADA/.test(line) || line.startsWith("FALLA") || line.startsWith("ERROR")) {
+    st.pending = null; cls = "l-err";
+    if (st.seqRun) { st.seqRun = false; log("Secuencia detenida por el error siguiente.", "l-err"); }
   }
   else if (line.startsWith("AVISO")) {
     cls = "l-warn";
-    if (line.includes("desarmo")) { st.moving = [false, false, false]; if (st.seqRun) { st.seqRun = false; log("Secuencia detenida: la pata se desarmó.", "l-err"); } }
+    const m = line.match(/pata=(\d)/);
+    if (m && /desarm|nFAULT|no llego/.test(line)) {
+      st.legs[+m[1]].moving = [false, false, false];
+      if (st.seqRun && st.seqLeg === +m[1]) { st.seqRun = false; log("Secuencia detenida por el aviso siguiente.", "l-err"); }
+    }
   }
   else if (line.startsWith("ARMADA") || line.startsWith("DESARMAR") || line.startsWith("CERO")) cls = "l-ok";
-  else if (line.startsWith("RESPUESTA") && line.includes("DETENIDA")) { cls = "l-warn"; st.moving = [false, false, false]; }
+  else if (line.startsWith("RESPUESTA") && line.includes("DETENIDA")) {
+    cls = "l-warn"; const m = line.match(/pata=(\d)/);
+    if (m) st.legs[+m[1]].moving = [false, false, false];
+  }
   log(line, cls);
 }
 
@@ -297,15 +349,15 @@ function checkRange(i, v) {
 function goJoint(i, v) {
   v = Math.round(v * 100) / 100;
   if (!checkRange(i, v)) return;
-  if (!st.armed) log("La pata no está armada: pulsa Armar primero.", "l-warn");
-  st.pendingTargets = [null, null, null]; st.pendingTargets[i] = v;
+  if (!L().armed) log(`La pata ${st.sel} no está armada: pulsa Armar primero.`, "l-warn");
+  st.pending = { leg: st.sel, t: [null, null, null] }; st.pending.t[i] = v;
   $("in" + i).value = v.toFixed(2); $("sl" + i).value = v;
-  send(`${J[i].key} ${fmt(v)}`);
+  sendLeg(`${J[i].key} ${fmt(v)}`);
 }
-function goFT(f, t) {
+function goFT(f, t, p = st.sel) {
   if (!checkRange(1, f) || !checkRange(2, t)) return false;
-  st.pendingTargets = [null, f, t];
-  send(`ft ${fmt(f)} ${fmt(t)}`);
+  st.pending = { leg: p, t: [null, f, t] };
+  sendLeg(`ft ${fmt(f)} ${fmt(t)}`, p);
   return true;
 }
 function paro() { st.seqRun = false; send("k"); }
@@ -327,18 +379,18 @@ function parseSeq() {
 async function runSeq() {
   if (st.seqRun) return;
   const poses = parseSeq(); if (!poses) return;
-  if (!st.armed) { log("Arma la pata antes de reproducir la secuencia.", "l-err"); return; }
-  st.seqRun = true; render();
+  if (!L().armed) { log("Arma la pata antes de reproducir la secuencia.", "l-err"); return; }
+  st.seqRun = true; st.seqLeg = st.sel; const leg = L(); render();
   log(`Secuencia: ${poses.length} poses${$("seqLoop").checked ? ", en bucle" : ""}.`, "l-ok");
   do {
     for (let k = 0; k < poses.length && st.seqRun; k++) {
       const p = poses[k];
       $("seqInfo").textContent = `pose ${k + 1} de ${poses.length}: fémur ${p.f}, tibia ${p.t}`;
-      st.arrivedEvents = [];
-      if (!goFT(p.f, p.t)) { st.seqRun = false; break; }
+      leg.arrived = [];
+      if (!goFT(p.f, p.t, st.seqLeg)) { st.seqRun = false; break; }
       const t0 = performance.now(), got = new Set();
       while (st.seqRun && got.size < 2) {
-        while (st.arrivedEvents.length) { const i = st.arrivedEvents.shift(); if (i === 1 || i === 2) got.add(i); }
+        while (leg.arrived.length) { const i = leg.arrived.shift(); if (i === 1 || i === 2) got.add(i); }
         if (performance.now() - t0 > 16000) { log("Secuencia detenida: una articulación no llegó en 16 s.", "l-err"); st.seqRun = false; }
         await sleep(50);
       }
@@ -352,24 +404,38 @@ async function runSeq() {
 /* ---------- vista ---------- */
 function chip(el, text, cls) { el.textContent = text; el.className = "chip" + (cls ? " " + cls : ""); }
 function render() {
-  const fresh = performance.now() - st.lastEst < 1000;
+  const l = L(), fresh = isFresh(l);
+  $("selName").textContent = `Pata ${st.sel}:`;
+  for (let p = 1; p <= NLEGS; p++) {
+    const q = st.legs[p], fr = isFresh(q);
+    let t = "—", c = "";
+    if (q.scan === "DUPLICADA") { t = "ID repetido"; c = "s-err"; }
+    else if (fr && (q.flags >> NFAULT) & 7) { t = "nFAULT " + J.filter((j, i) => (q.flags >> (NFAULT + i)) & 1).map((j) => j.name).join(", ") + (q.armed ? " · armada" : ""); c = "s-err"; }
+    else if (fr && q.armed) { t = q.moving.some(Boolean) ? "armada · en camino" : "armada"; c = "s-ok"; }
+    else if (fr) t = "responde";
+    else if (q.scan === "SIN_BUS") { t = "sin bus"; c = "s-err"; }
+    else if (st.connected && q.scan) { t = "no responde"; c = q.scan === "OK" ? "s-err" : ""; }
+    $("ls" + p).textContent = t; $("ls" + p).className = c; $("leg" + p).title = t;
+    $("leg" + p).classList.toggle("sel", p === st.sel);
+    $("leg" + p).disabled = st.seqRun && p !== st.sel;
+  }
   chip($("chConn"), st.connected ? "Maestra conectada" : "Desconectada", st.connected ? "ok" : "");
   chip($("chBus"), "Bus: " + (st.bus === "NORMAL" ? "NORMAL" : st.bus), st.bus === "NORMAL" ? "ok" : st.connected ? "warn" : "");
-  chip($("chArm"), st.armed === null || !fresh ? "Pata: ?" : st.armed ? "Pata ARMADA" : "Pata desarmada", fresh && st.armed ? "ok" : "");
-  chip($("chData"), !st.connected ? "Sin datos" : fresh ? "Pata responde" : "La pata no responde", !st.connected ? "" : fresh ? "ok" : "err");
+  chip($("chArm"), l.armed === null || !fresh ? `Pata ${st.sel}: ?` : l.armed ? `Pata ${st.sel} ARMADA` : `Pata ${st.sel} desarmada`, fresh && l.armed ? "ok" : "");
+  chip($("chData"), !st.connected ? "Sin datos" : fresh ? `Pata ${st.sel} responde` : `La pata ${st.sel} no responde`, !st.connected ? "" : fresh ? "ok" : "err");
   $("btnConn").textContent = st.connected ? "Desconectar" : "Conectar maestra";
-  const can = st.connected, armed = fresh && st.armed;
-  ["btnArm", "btnDisarm", "btnZero", "btnStatus", "btnStop", "btnSend"].forEach((id) => $(id).disabled = !can);
+  const can = st.connected, armed = fresh && l.armed;
+  ["btnArm", "btnDisarm", "btnDisarmAll", "btnScan", "btnZero", "btnStatus", "btnStop", "btnSend"].forEach((id) => $(id).disabled = !can);
   $("btnFT").disabled = !armed || st.seqRun; $("btnSeq").disabled = !armed || st.seqRun; $("btnSeqStop").disabled = !st.seqRun;
   J.forEach((j, i) => {
-    const nf = fresh && (st.flags >> (NFAULT + i)) & 1, arr = fresh && (st.flags >> (ARRIVED + i)) & 1;
-    $("pos" + i).textContent = fresh && isFinite(st.pos[i]) ? (st.pos[i] >= 0 ? "+" : "") + st.pos[i].toFixed(3) : "—";
-    $("tg" + i).textContent = st.target[i] === null ? "—" : st.target[i].toFixed(2) + " rad";
+    const nf = fresh && (l.flags >> (NFAULT + i)) & 1, arr = fresh && (l.flags >> (ARRIVED + i)) & 1;
+    $("pos" + i).textContent = fresh && isFinite(l.pos[i]) ? (l.pos[i] >= 0 ? "+" : "") + l.pos[i].toFixed(3) : "—";
+    $("tg" + i).textContent = l.target[i] === null ? "—" : l.target[i].toFixed(2) + " rad";
     let s = "—", c = "";
     if (nf) { s = "nFAULT"; c = "err"; }
-    else if (fresh && st.armed && st.moving[i]) { s = "en camino"; c = "warn"; }
+    else if (fresh && l.armed && l.moving[i]) { s = "en camino"; c = "warn"; }
     else if (arr) { s = "llegó · sostiene"; c = "ok"; }
-    else if (fresh) s = st.armed ? "libre" : "suelta";
+    else if (fresh) s = l.armed ? "libre" : "suelta";
     chip($("st" + i), s, c);
     ["go", "dm", "dp", "z"].forEach((p) => $(p + i).disabled = !armed || nf || st.seqRun);
     $("sl" + i).disabled = !armed || nf || st.seqRun;
@@ -380,18 +446,18 @@ function drawChart() {
   const cv = $("chart"), dpr = window.devicePixelRatio || 1, W = cv.clientWidth, H = cv.clientHeight;
   if (cv.width !== W * dpr || cv.height !== H * dpr) { cv.width = W * dpr; cv.height = H * dpr; }
   const g = cv.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
-  const now = performance.now() / 1000, S = st.samples;
+  const now = performance.now() / 1000, S = L().samples;
   let lo = -0.2, hi = 0.2;
   for (const s of S) for (let i = 0; i < 3; i++) {
     for (const v of [s.p[i], s.g[i]]) if (v !== null && isFinite(v)) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
   }
   const pad = (hi - lo) * 0.1; lo -= pad; hi += pad;
-  const L = 44, R = 8, T = 8, B = 20;
-  const x = (t) => L + (W - L - R) * (1 - (now - t) / 20), y = (v) => T + (H - T - B) * (hi - v) / (hi - lo);
+  const ML = 44, R = 8, T = 8, B = 20;
+  const x = (t) => ML + (W - ML - R) * (1 - (now - t) / 20), y = (v) => T + (H - T - B) * (hi - v) / (hi - lo);
   g.font = "11px Segoe UI, sans-serif"; g.fillStyle = "#8b98a8"; g.strokeStyle = "#2a3542"; g.lineWidth = 1;
   const step = (hi - lo) > 1.5 ? 0.5 : 0.2;
   for (let v = Math.ceil(lo / step) * step; v <= hi; v += step) {
-    g.beginPath(); g.moveTo(L, y(v)); g.lineTo(W - R, y(v)); g.stroke(); g.fillText(v.toFixed(1), 6, y(v) + 4);
+    g.beginPath(); g.moveTo(ML, y(v)); g.lineTo(W - R, y(v)); g.stroke(); g.fillText(v.toFixed(1), 6, y(v) + 4);
   }
   for (let s = 0; s <= 20; s += 5) g.fillText(s === 0 ? "ahora" : `−${s} s`, x(now - s) - (s === 0 ? 28 : 12), H - 5);
   J.forEach((j, i) => {
@@ -407,13 +473,15 @@ function drawChart() {
 /* ---------- botones ---------- */
 $("btnConn").onclick = connect;
 $("btnStop").onclick = paro;
-$("btnArm").onclick = () => send("a");
-$("btnDisarm").onclick = () => { st.seqRun = false; send("d"); };
-$("btnStatus").onclick = () => send("e");
+$("btnArm").onclick = () => sendLeg("a");
+$("btnScan").onclick = () => { if (st.seqRun) return log("Detén la secuencia antes de escanear.", "l-warn"); send("escanear"); };
+$("btnDisarmAll").onclick = () => { st.seqRun = false; send("d todas"); };
+$("btnDisarm").onclick = () => { st.seqRun = false; sendLeg("d"); };
+$("btnStatus").onclick = () => sendLeg("e");
 $("btnZero").onclick = () => {
-  if (st.armed) { log("Desarma la pata antes de poner el cero.", "l-err"); return; }
-  if (confirm("El encoder de las 3 articulaciones pasará a valer 0 en la pose actual.\n\nPon el fémur horizontal y la tibia alineada con él: la gravedad calibrada supone ese cero.\n\n¿Continuar?")) {
-    st.target = [null, null, null]; send("cero todo");
+  if (L().armed) { log("Desarma la pata antes de poner el cero.", "l-err"); return; }
+  if (confirm("Pata " + st.sel + ": el encoder de las 3 articulaciones pasará a valer 0 en la pose actual.\n\nPon el fémur horizontal y la tibia alineada con él: la gravedad calibrada supone ese cero.\n\n¿Continuar?")) {
+    L().target = [null, null, null]; sendLeg("cero todo");
   }
 };
 $("btnFT").onclick = () => goFT(+$("ftF").value, +$("ftT").value);
