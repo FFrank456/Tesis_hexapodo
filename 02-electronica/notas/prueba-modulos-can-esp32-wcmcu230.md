@@ -259,9 +259,25 @@ Cuando la consigna está a 50 mrad, se mueven y llegan dentro de la tolerancia (
 | 4 | 5/5 | 1000/1000 | 263 / 356 / 1171 | DETENIDA |
 | 5 | 5/5 | 1000/1000 | 261 / 342 / 834 | DETENIDA |
 
-5041 tramas enviadas, 0 fallos, 0 errores de bus, TEC/REC = 0/0 al final; autotest 10/10 dos veces. Entre los dos autotests salió un aviso `error_pasivo` (REC = 129) que no se repitió; causa sin comprobar. La pata 1 reportó el fémur en +1.010 rad: hay que revisar el cero antes de armarla.
+5041 tramas enviadas, 0 fallos, 0 errores de bus, TEC/REC = 0/0 al final; autotest 10/10 dos veces. Entre los dos autotests salió un aviso `error_pasivo` (REC = 129) que no se repitió; causa sin comprobar. La pata 1 reportó el fémur en +1.010 rad: es su pose de arranque guardada en NVS (+1.0098, fémur colgando), no una falla.
 
 Pendiente: la **placa 6 (COM17)** fuerza el bus a dominante por sí sola (CANH–CANL = 2,1 V, 0/6 placas responden con ella conectada). El módulo SN65HVD230 dañado es lo más probable, sin confirmar. Las placas 1 y 2 funcionaron después de limpiar con alcohol flux y polvo de estaño.
+
+**Cinco placas con los ID reasignados (24/11/2026).** Solo comunicación, sin armar ni mover motores. Ráfagas de 1000 pings, 3 por placa, con las cinco en el bus:
+
+| ID | Placa (MAC) | ID anterior | Pings | Promedio por tanda (µs) | Máx (µs) | PARO |
+|---|---|---|---|---|---|---|
+| 1 | COM6 (C8854135FF94) | 1 | 3000/3000 | 338–344 | 746 | DETENIDA |
+| 3 | COM5 (C8854135E844) | 2 | 3000/3000 | 341–394 | 1260 | DETENIDA |
+| 4 | COM16 (C88541371E34) | 3 | 3000/3000 | 338–340 | 842 | DETENIDA |
+| 5 | COM18 (C8854136D630) | 5 | 3000/3000 | 338–339 | 1008 | DETENIDA |
+| 6 | COM7 (C88541371524) | 4 | 3000/3000 | 392–396 | 1522 | DETENIDA |
+
+Total: 15000/15000 pings, 40/40 escaneos con las cinco placas, 0 errores de bus, TEC/REC = 0/0 y autotest 10/10 cuatro veces.
+
+Antes de este resultado, el bus se bloqueaba a ratos (CRX en 0, BUS_OFF) con distintas combinaciones de placas. Se encontró flojo el GND entre la maestra y la primera placa. Después de asegurarlo y rehacer conexiones, las cinco pasaron; la COM7, sospechosa, también pasó sola (6000/6000). Lo más probable es un contacto flojo en el GND o en un conector, sin haber aislado cuál. Lección: GND común firme entre maestra, placas y fuente, y revisar los cables antes de cambiar módulos.
+
+Pendiente: COM17 (MAC C8854135ED18) sigue fuera del bus y le corresponde el ID 2; hay que volver a medirla sola con el GND firme. La pata 5 (COM18) reporta `nFAULT_femur` desde el 24/11: no armarla hasta revisarlo.
 
 Fallas encontradas por el camino:
 - Una MOD_DRV (COM17) tenía CRX en 0 aunque el pin CRX del módulo daba 3,28 V: la unión J4 pin 4 → IO22 (pin 36 del WROOM) estaba abierta. Resoldarla funcionó, pero se volvió a abrir al mover la placa. Con esa placa conectada, todo el bus quedaba en dominante.
