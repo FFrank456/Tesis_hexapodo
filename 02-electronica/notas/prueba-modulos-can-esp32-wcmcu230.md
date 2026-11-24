@@ -249,6 +249,20 @@ Cuando la consigna está a 50 mrad, se mueven y llegan dentro de la tolerancia (
 
 7 de 7 órdenes llegaron, con un error ≤ 0.019 rad (tolerancia 0.02). No hubo desarmes por latido. La coxa siguió fuera por el nFAULT del DRVA.
 
+**Cinco placas en el mismo bus (23/11/2026).** Solo comunicación: sin armar ni mover motores. Firmware `pata_MOD_DRV` con ID en NVS, maestra ESP32-S3, 500 kbit/s.
+
+| Placa | Escaneos | Ráfaga de pings | Ida y vuelta: mín / prom / máx (µs) | PARO |
+|---|---|---|---|---|
+| 1 | 5/5 | 1000/1000 | 278 / 335 / 628 | DETENIDA |
+| 2 | 5/5 | 1000/1000 | 262 / 331 / 1032 | DETENIDA |
+| 3 | 5/5 | 1000/1000 | 265 / 342 / 796 | DETENIDA |
+| 4 | 5/5 | 1000/1000 | 263 / 356 / 1171 | DETENIDA |
+| 5 | 5/5 | 1000/1000 | 261 / 342 / 834 | DETENIDA |
+
+5041 tramas enviadas, 0 fallos, 0 errores de bus, TEC/REC = 0/0 al final; autotest 10/10 dos veces. Entre los dos autotests salió un aviso `error_pasivo` (REC = 129) que no se repitió; causa sin comprobar. La pata 1 reportó el fémur en +1.010 rad: hay que revisar el cero antes de armarla.
+
+Pendiente: la **placa 6 (COM17)** fuerza el bus a dominante por sí sola (CANH–CANL = 2,1 V, 0/6 placas responden con ella conectada). El módulo SN65HVD230 dañado es lo más probable, sin confirmar. Las placas 1 y 2 funcionaron después de limpiar con alcohol flux y polvo de estaño.
+
 Fallas encontradas por el camino:
 - Una MOD_DRV (COM17) tenía CRX en 0 aunque el pin CRX del módulo daba 3,28 V: la unión J4 pin 4 → IO22 (pin 36 del WROOM) estaba abierta. Resoldarla funcionó, pero se volvió a abrir al mover la placa. Con esa placa conectada, todo el bus quedaba en dominante.
 - El firmware de prueba tenía `pdMS_TO_TICKS(5)` = 0 con FreeRTOS a 100 Hz, lo que hacía saltar el task watchdog. Se corrigió con una espera mínima de 1 tick.

@@ -67,7 +67,7 @@ En cada pose se miden **H**, la altura de la punta del pie sobre la mesa, y **R*
 | 0 | −0.5 | 1.2 | 154.1 | −25.7 |
 | 0 | 0.5 | 0.5 | 124.9 | −94.4 |
 | 0 | −1.0 | 1.5 | 150.9 | +8.0 |
-| ±0.5 | 0 | 0 | 207.9 | 0 (el pie gira; la cuerda entre las dos poses mide 99.7 mm) |
+| ±0.5 | 0 | 0 | 207.9 | 0 (el pie gira; la distancia entre las dos marcas, +0.5 y −0.5, es 199.3 mm: 99.7 mm a cada lado) |
 
 ## Ejecutar
 
