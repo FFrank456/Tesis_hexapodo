@@ -277,7 +277,20 @@ Total: 15000/15000 pings, 40/40 escaneos con las cinco placas, 0 errores de bus,
 
 Antes de este resultado, el bus se bloqueaba a ratos (CRX en 0, BUS_OFF) con distintas combinaciones de placas. Se encontró flojo el GND entre la maestra y la primera placa. Después de asegurarlo y rehacer conexiones, las cinco pasaron; la COM7, sospechosa, también pasó sola (6000/6000). Lo más probable es un contacto flojo en el GND o en un conector, sin haber aislado cuál. Lección: GND común firme entre maestra, placas y fuente, y revisar los cables antes de cambiar módulos.
 
-Pendiente: COM17 (MAC C8854135ED18) sigue fuera del bus y le corresponde el ID 2; hay que volver a medirla sola con el GND firme. La pata 5 (COM18) reporta `nFAULT_femur` desde el 24/11: no armarla hasta revisarlo.
+**Las seis placas en el mismo bus (24/11/2026).** Después se añadió la COM17 (ID 2). Solo comunicación, sin armar ni mover motores; 3 ráfagas de 1000 pings por placa:
+
+| ID | Placa (MAC) | Pings | Promedio por tanda (µs) | Máx (µs) | PARO |
+|---|---|---|---|---|---|
+| 1 | COM6 (C8854135FF94) | 3000/3000 | 337–342 | 838 | DETENIDA |
+| 2 | COM17 (C8854135ED18) | 3000/3000 | 338–354 | 885 | DETENIDA |
+| 3 | COM5 (C8854135E844) | 3000/3000 | 354–355 | 1162 | DETENIDA |
+| 4 | COM16 (C88541371E34) | 3000/3000 | 348–353 | 940 | DETENIDA |
+| 5 | COM18 (C8854136D630) | 3000/3000 | 351–353 | 944 | DETENIDA |
+| 6 | COM7 (C88541371524) | 3000/3000 | 340–342 | 1003 | DETENIDA |
+
+Total: 18000/18000 pings, 15/15 escaneos con las seis, 0 errores de bus, TEC/REC = 0/0 y autotest 10/10 cuatro veces. La COM17, que el 23/11 forzaba el bus, pasó; no quedó registrado qué se le hizo.
+
+Pendiente: la pata 5 (COM18) reporta `nFAULT_femur` (DRVB, IO14) de forma constante, con la pata desarmada. Causa sin medir: revisar VM, VCP, nSLEEP, la línea IO14 y probar sin el motor en J3B. No armarla hasta resolverlo.
 
 Fallas encontradas por el camino:
 - Una MOD_DRV (COM17) tenía CRX en 0 aunque el pin CRX del módulo daba 3,28 V: la unión J4 pin 4 → IO22 (pin 36 del WROOM) estaba abierta. Resoldarla funcionó, pero se volvió a abrir al mover la placa. Con esa placa conectada, todo el bus quedaba en dominante.
