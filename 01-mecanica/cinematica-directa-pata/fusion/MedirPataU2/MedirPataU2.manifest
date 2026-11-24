@@ -1,0 +1,9 @@
+{
+  "autodeskProduct": "Fusion360",
+  "type": "script",
+  "author": "",
+  "description": "Registra juntas y geometría del pie de la Unidad 2.",
+  "version": "1.0.0",
+  "runOnStartup": false,
+  "supportedOS": "windows|mac"
+}
