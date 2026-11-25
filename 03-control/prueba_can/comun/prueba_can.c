@@ -67,6 +67,17 @@ static uint32_t s_omitidos;
 #define POS_PRINT_US     500000    /* posicion cada 0.5 s mientras algo se mueve */
 #define LLEGADA_MAX_US   15000000  /* aviso si no llega en 15 s */
 static const char *const k_art[3] = {"coxa", "femur", "tibia"};
+/* Maestra: tras un BUS_OFF vuelve sola a NORMAL. La espera es mayor que los 0,5 s del
+ * latido a proposito: cualquier orden lo renueva, y antes las patas tienen que soltarse. */
+#define RECUP_MIN_US     1000000
+#define RECUP_MAX_US     5000000
+#define RECUP_ESTABLE_US 10000000  /* 10 s sin BUS_OFF: la espera vuelve al minimo */
+#define RECUP_DOM_PCT    60        /* con mas tiempo en 0 el bus sigue pegado: no transmite */
+#define SONDEO_US        500000    /* busca una pata que no responde cada 0,5 s */
+static bool s_recuperar;
+static int64_t s_recup_t, s_recup_espera = RECUP_MIN_US, s_ultimo_bus_off, s_ultimo_sondeo;
+static uint32_t s_recup_n, s_recup_dom;
+static bool s_recup_aviso;
 static bool s_stream;   /* 'v 1': linea EST cada 100 ms para la interfaz web */
 static int64_t s_ultimo_latido;
 typedef struct {
@@ -199,6 +210,7 @@ static void ayuda(void)
 
 static bool iniciar(twai_mode_t modo)
 {
+    s_recuperar = false;   /* 'n', 'l' o 't' mandan sobre la recuperacion automatica */
     if (s_instalado) {
         twai_status_info_t st;
         if (twai_get_status_info(&st) == ESP_OK && st.state == TWAI_STATE_RUNNING) twai_stop();
@@ -262,6 +274,17 @@ static void medir_crx(void)
     else                      puts("hay actividad o ruido en el bus (repite con la otra placa callada)");
 }
 
+static void programar_recuperacion(void)
+{
+    int64_t ahora = esp_timer_get_time();
+    if (!s_ultimo_bus_off || ahora - s_ultimo_bus_off > RECUP_ESTABLE_US) s_recup_espera = RECUP_MIN_US;
+    else if ((s_recup_espera *= 2) > RECUP_MAX_US) s_recup_espera = RECUP_MAX_US;
+    s_ultimo_bus_off = s_recup_t = ahora;
+    s_recup_n = s_recup_dom = 0;
+    s_recup_aviso = false;
+    s_recuperar = true;
+}
+
 static void procesar_alertas(uint32_t a)
 {
     if (a & TWAI_ALERT_ERR_PASS) {
@@ -280,8 +303,31 @@ static void procesar_alertas(uint32_t a)
             if (alguna_armada()) puts("AVISO,BUS_OFF con patas armadas: se sueltan solas en 0,5 s");
             for (int p = 1; p <= LEG_CAN_MAX_LEGS; p++) { s_patas[p].armada = s_patas[p].vista = false; s_patas[p].pendientes = 0; }
         }
+        bool era_normal = s_modo == TWAI_MODE_NORMAL;
         iniciar(TWAI_MODE_LISTEN_ONLY);
+        if (s_cfg->es_maestra && era_normal) programar_recuperacion();
     }
+}
+
+/* En ESCUCHA tras un BUS_OFF: mira CRX sin transmitir y vuelve a NORMAL cuando el bus ya no
+ * esta pegado en dominante. No arma nada. */
+static void recuperar_bus(void)
+{
+    if (!s_recuperar) return;
+    s_recup_n++;
+    if (gpio_get_level(s_cfg->pin_rx) == 0) s_recup_dom++;
+    if (esp_timer_get_time() - s_recup_t < s_recup_espera) return;
+    bool pegado = s_recup_dom * 100 > s_recup_n * RECUP_DOM_PCT;
+    if (pegado) {
+        if (!s_recup_aviso) printf("AVISO,el bus sigue pegado en 0 (%" PRIu32 " %%): espero\n", s_recup_dom * 100 / s_recup_n);
+        s_recup_aviso = true;
+    } else {
+        puts("AVISO,bus libre: vuelvo a NORMAL (patas desarmadas)");
+        if (iniciar(TWAI_MODE_NORMAL)) return;
+        s_recuperar = true;
+    }
+    s_recup_t = esp_timer_get_time();
+    s_recup_n = s_recup_dom = 0;
 }
 
 /* Envia una trama en un solo intento (sin reintentos) y espera el resultado. */
@@ -752,6 +798,7 @@ static void latido_pata(int p)
         }
         return;
     }
+    if (q->fallos >= 3) printf("AVISO,la pata %d volvio a responder\n", p);
     q->fallos = 0;
     if (!q->armada) return;
     if (!(q->flags & LEG_CAN_STATUS_ARMED_BIT)) {
@@ -795,6 +842,17 @@ static void latido(void)
     if (!s_stream) return;
     for (int p = 1; p <= LEG_CAN_MAX_LEGS && s_modo == TWAI_MODE_NORMAL; p++)
         if (!s_patas[p].armada && (s_patas[p].vista || p == s_sel)) latido_pata(p);
+    /* Una pata que se perdio vuelve sola. Solo sin patas armadas: una que no contesta
+     * retrasa el latido de las demas. */
+    if (alguna_armada() || s_modo != TWAI_MODE_NORMAL || ahora - s_ultimo_sondeo < SONDEO_US) return;
+    s_ultimo_sondeo = ahora;
+    static int s_sondeo;
+    for (int k = 0; k < LEG_CAN_MAX_LEGS; k++) {
+        s_sondeo = s_sondeo % LEG_CAN_MAX_LEGS + 1;
+        if (s_patas[s_sondeo].vista || s_sondeo == s_sel) continue;
+        latido_pata(s_sondeo);
+        break;
+    }
 }
 
 static void enviar_contador(void)
@@ -933,7 +991,7 @@ void prueba_can_ejecutar(const prueba_can_cfg_t *cfg)
 
         uint32_t a;
         if (s_instalado && twai_read_alerts(&a, 0) == ESP_OK) procesar_alertas(a);
-        if (s_cfg->es_maestra) { latido(); robot_sim_tick(); }
+        if (s_cfg->es_maestra) { recuperar_bus(); latido(); robot_sim_tick(); }
 
         /* Las ordenes se escriben y se confirman con Enter. */
         char c;

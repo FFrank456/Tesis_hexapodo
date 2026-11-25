@@ -159,6 +159,29 @@ Lectura de las seis patas, cinemática inversa y marcha **simulada**. No arma ni
 **Referencia (vista superior del usuario, 25-nov):** la pata *n* lleva el ID *n* y el frente es el lado de las patas 1 y 6, donde va la cámara. Vistas desde arriba van en sentido antihorario: 1 delantera, 2 media y 3 trasera de un lado; 4 trasera, 5 media y 6 delantera del otro. "Derecha" (1-2-3) e "izquierda" (4-5-6) son las de quien mira al robot de frente: el lado 1-2-3 es el izquierdo del propio robot y es +y. La numeración de `fusion-ensamble/1_estructura.py` no coincide con esta: no se usa para los IDs.
 **Seguridad de la maestra (25-nov):** el PARO sale aunque la maestra esté en ESCUCHA; con patas armadas se bloquean `t`, `l` y `r`, que cortaban el latido, y `n` ya no reinicia el bus; tras un BUS_OFF las patas dejan de figurar armadas; un ESTADO o PONG atrasado no cuenta como respuesta a una orden; una línea de más de 63 caracteres se descarta entera.
 
+**Recuperación tras BUS_OFF (25-nov):** la maestra escucha sin transmitir y vuelve sola a NORMAL si CRX estuvo en 0 menos del 60 % del tiempo (espera de 1 s, hasta 5 s si se repite). La espera supera los 0,5 s del latido para que las patas ya se hayan soltado; nunca rearma. `n`, `l` y `t` la cancelan. Con `v 1` y ninguna pata armada, busca cada 0,5 s una pata que no responde. No corrige un bus bloqueado por hardware.
+
+**Velocidad del bus (25-nov):** la maestra y las seis patas usan CAN a **500 kbit/s**, fijo en el firmware (`TWAI_TIMING_CONFIG_500KBITS()` en `comun/prueba_can.c` y en `pata_MOD_DRV/main/main.c`). En ESP-IDF 5.4.4 eso es un reloj de 10 MHz, 20 cuantos por bit (1 + 15 + 4), muestreo al 80 % y SJW 3, igual en el S3 y en el ESP32. Cambiarla exige recompilar y cargar las siete placas. La consola USB es otra cosa y no tiene que coincidir: 115200 en la maestra y 460800 en las patas.
+
+| Dato (trama de 8 bytes, ~130 bits) | Valor |
+|---|---|
+| Una trama | ≈ 0,26 ms |
+| Ida y vuelta medida (ping, 25-nov) | 0,26–0,35 ms de media, máx. ≈ 1 ms |
+| Ronda a las 6 patas | ≈ 3 ms |
+| Bus ocupado a 20 / 50 / 100 / 200 Hz | ~6 / 16 / 31 / 62 % |
+
+A 500 kbit/s el bus admite unos 100 m de cable, y aquí mide menos de 2 m. El control rápido corre dentro de cada placa, y por el CAN solo viajan consignas y estados (20–50 Hz alcanzan), así que la velocidad sobra. Bajarla no arregla un bus bloqueado por hardware.
+
+**Pruebas de aislamiento del bus (25-nov), sin armar:**
+
+| Conexión | Resultado |
+|---|---|
+| Torre 1-5-6 al mover cables | Bus bloqueado (CRX en 0, BUS_OFF); 0 de 153 escaneos completos |
+| Maestra + 5 | 3000/3000 pings, 0 errores; CRX en 1 |
+| Placa 5 sola (`CAN,STATUS` por USB) | leg_id 5, 0 errores |
+| Maestra + 5 + 6 | 10/10 escaneos con las dos, 4000/4000 pings, 0 errores |
+| Falta | Añadir la placa 1 (sospechosa sin confirmar) y la torre 2-3-4 |
+
 **Supuestos por confirmar en el robot:** los signos de encoder son iguales en las seis (en Fusion son copias giradas, no espejadas); el cero es la pose cero del CAD; el centro de masa está en el centro del cuerpo. Los límites usados son la intersección del CAN y los provisionales de MATLAB: coxa −0.5…0.6, fémur ±1 y tibia −1…0.7 rad.
 
 **Resultado:** con tibia ≤ 0.7 rad, radio 182 y altura 75 mm, el paso máximo es de 28 mm con 15 mm de elevación, 18 mm con 20 mm y ninguno (< 2 mm) con 25 mm. El límite de la tibia es lo que más restringe la marcha; medir su rango real antes de ampliarlo.
