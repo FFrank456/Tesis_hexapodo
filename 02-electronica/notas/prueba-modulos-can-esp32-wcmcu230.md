@@ -290,7 +290,7 @@ Antes de este resultado, el bus se bloqueaba a ratos (CRX en 0, BUS_OFF) con dis
 
 Total: 18000/18000 pings, 15/15 escaneos con las seis, 0 errores de bus, TEC/REC = 0/0 y autotest 10/10 cuatro veces. La COM17, que el 23/11 forzaba el bus, pasó; no quedó registrado qué se le hizo.
 
-Pendiente: la pata 5 (COM18) reporta `nFAULT_femur` (DRVB, IO14) de forma constante, con la pata desarmada. Causa sin medir: revisar VM, VCP, nSLEEP, la línea IO14 y probar sin el motor en J3B. No armarla hasta resolverlo.
+Durante esta prueba la pata 5 (COM18) reportó `nFAULT_femur` (DRVB, IO14) de forma constante, con la pata desarmada. Después, el usuario repitió la prueba y las placas respondieron sin advertencias; no quedó registrada la causa ni qué se cambió. Comprobar que no reaparezca antes de armar la pata 5.
 
 Fallas encontradas por el camino:
 - Una MOD_DRV (COM17) tenía CRX en 0 aunque el pin CRX del módulo daba 3,28 V: la unión J4 pin 4 → IO22 (pin 36 del WROOM) estaba abierta. Resoldarla funcionó, pero se volvió a abrir al mover la placa. Con esa placa conectada, todo el bus quedaba en dominante.
