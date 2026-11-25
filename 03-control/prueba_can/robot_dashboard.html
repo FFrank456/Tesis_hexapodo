@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Robot hexápodo</title>
+<style>
+:root { --bg:#0f141b; --panel:#171e27; --panel2:#1e2732; --line:#2a3542; --text:#e6edf5; --muted:#8b98a8; --accent:#57c7ff; --ok:#4fd18b; --warn:#f5b94a; --err:#ff6b6b; }
+* { box-sizing:border-box; }
+body { margin:0; background:var(--bg); color:var(--text); font:14px/1.4 "Segoe UI",system-ui,sans-serif; }
+header { position:sticky; top:0; z-index:2; background:var(--bg); display:flex; flex-wrap:wrap; gap:10px; align-items:center; padding:10px 16px; border-bottom:1px solid var(--line); }
+h1 { font-size:20px; margin:0; font-weight:600; } h2 { font-size:15px; margin:0 0 8px; }
+button,input,select { font:inherit; color:var(--text); background:var(--panel2); border:1px solid var(--line); border-radius:6px; padding:6px 10px; }
+button { cursor:pointer; } button:disabled,input:disabled,select:disabled { opacity:.45; cursor:default; }
+button:hover:not(:disabled) { border-color:var(--accent); }
+button.primary,button.on { background:#1f4f6b; border-color:#2c6f95; }
+button.stop { background:#8b1f28; border-color:#c33; font-weight:700; font-size:16px; padding:8px 22px; margin-left:auto; }
+.chip { font-size:12px; padding:3px 10px; border-radius:12px; background:var(--panel2); color:var(--muted); border:1px solid var(--line); }
+.chip.ok { color:#0c1a12; background:var(--ok); } .chip.warn { color:#1f1606; background:var(--warn); } .chip.err { color:#fff; background:#8b1f28; }
+main { padding:12px 16px 24px; display:grid; gap:12px; }
+.card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:12px; min-width:0; }
+.row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+.grid { display:grid; grid-template-columns:minmax(0,3fr) minmax(0,2fr); gap:12px; }
+.legs { display:grid; grid-template-columns:repeat(auto-fit,minmax(215px,1fr)); gap:10px; }
+@media (max-width:900px) { .grid { grid-template-columns:minmax(0,1fr); } }
+canvas { width:100%; display:block; background:var(--panel2); border-radius:6px; }
+#top { height:430px; } #side { height:260px; } #phase { height:190px; } #hist { height:260px; }
+.leg { cursor:pointer; } .leg.sel { border-color:var(--accent); }
+.leg b { font-size:15px; } .hint { color:var(--muted); font-size:12px; }
+.kv { display:grid; grid-template-columns:auto 1fr 1fr 1fr; gap:2px 8px; font-size:12px; font-variant-numeric:tabular-nums; margin-top:6px; }
+.kv span { text-align:right; } .kv span:nth-child(4n+1) { text-align:left; color:var(--muted); }
+.bar { height:8px; background:var(--panel2); border-radius:4px; overflow:hidden; margin-top:6px; } .bar i { display:block; height:100%; width:0; background:var(--accent); } .bar i.air { background:var(--warn); }
+.big { display:flex; flex-wrap:wrap; gap:18px; } .big div b { display:block; font-size:22px; font-variant-numeric:tabular-nums; }
+label { font-size:12px; color:var(--muted); display:inline-flex; flex-direction:column; gap:3px; } label input { width:96px; }
+.notice { background:#3b2a12; border:1px solid #6b4a1f; color:#f5d9a8; padding:8px 12px; border-radius:8px; }
+#log { height:240px; overflow:auto; font:12px/1.35 Consolas,monospace; background:var(--panel2); border-radius:6px; padding:6px 8px; white-space:pre-wrap; }
+.l-err { color:var(--err); } .l-tx { color:var(--accent); } .l-warn { color:var(--warn); }
+table { border-collapse:collapse; width:100%; font-size:13px; } th,td { text-align:left; padding:4px 8px; border-bottom:1px solid var(--line); } th { color:var(--muted); font-weight:500; }
+.tblw { overflow-x:auto; } [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Robot hexápodo</h1>
+  <button class="primary" id="conn">Conectar maestra</button>
+  <span class="chip" id="cConn">Desconectada</span><span class="chip" id="cBus">Bus: ?</span><span class="chip" id="cLegs">Patas: 0/6</span><span class="chip" id="cSim">Simulación: parada</span>
+  <button class="stop" id="paro" title="PARO general (Esc): suelta los motores">PARO</button>
+</header>
+<main>
+  <div class="notice"><b>Fase 1: solo lectura y simulación.</b> Esta página no arma ni mueve motores. La línea llena es la lectura real de los encoders y la discontinua, la simulación. El frente es el lado de las patas 1 y 6; derecha (1, 2, 3) e izquierda (4, 5, 6) son las de quien lo mira de frente.</div>
+  <div class="notice" id="noserial" hidden>Este navegador no tiene Web Serial. Abre la página en Chrome o Edge.</div>
+  <nav class="row" id="tabs"><button data-t="robot" class="on">Robot</button><button data-t="pata">Pata</button><button data-t="marcha">Marcha</button><button data-t="diag">Diagnóstico</button></nav>
+
+  <section data-p="robot" class="grid">
+    <div class="card"><h2>Vista superior</h2><canvas id="top"></canvas></div>
+    <div style="display:grid; gap:12px; align-content:start">
+      <div class="card"><h2>Locomoción simulada</h2>
+        <div class="row"><button class="primary" data-c="sim 1">Iniciar</button><button data-c="sim pausa">Pausa</button><button data-c="sim sig">Paso a paso</button><button data-c="sim 0">Reiniciar</button></div>
+        <div class="big" style="margin-top:10px"><div><span class="hint">Avance estimado</span><b id="vX">—</b></div><div><span class="hint">Lateral (+ lado 1-2-3)</span><b id="vY">—</b></div><div><span class="hint">Giro</span><b id="vR">—</b></div><div><span class="hint">Fase</span><b id="vF">—</b></div><div><span class="hint">Margen estabilidad</span><b id="vM">—</b></div></div>
+        <div class="hint" style="margin-top:6px">El avance supone pies que no patinan; el margen, el centro de masa en el centro del cuerpo.</div></div>
+      <div class="card"><h2 id="sideT">Vista lateral</h2><canvas id="side"></canvas></div>
+    </div>
+  </section>
+  <section data-p="robot" class="legs" id="legs"></section>
+
+  <section data-p="pata" class="grid" hidden>
+    <div class="card"><h2 id="legT">Pata</h2><canvas id="hist"></canvas><div class="hint">Ángulos leídos (coxa azul, fémur violeta, tibia verde) y simulados (discontinua), últimos 20 s.</div></div>
+    <div class="card"><h2>Cinemática inversa</h2><div class="hint">Pie en el marco de la coxa, en mm: X hacia fuera, Y lateral, Z arriba. Solo calcula.</div>
+      <div class="row" style="margin:8px 0"><label>X<input id="ix" type="number" step="5" value="182"></label><label>Y<input id="iy" type="number" step="5" value="0"></label><label>Z<input id="iz" type="number" step="5" value="-75"></label><button class="primary" id="ci">Calcular</button><button data-c="ci test">Autoprueba</button></div>
+      <div id="ciOut" class="big"></div></div>
+  </section>
+
+  <section data-p="marcha" class="grid" hidden>
+    <div class="card"><h2>Parámetros</h2>
+      <div class="row"><label>Marcha<select id="mTipo"><option value="ondulada">Ondulada</option><option value="ripple">Ripple</option><option value="tripode">Trípode</option></select></label><label>Ciclo (s)<input id="mC" type="number" min="4" max="60" step="1"></label></div>
+      <div class="row" style="margin-top:8px"><label>Radio (mm)<input id="mR" type="number" step="2"></label><label>Altura (mm)<input id="mA" type="number" step="5"></label><label>Elevación (mm)<input id="mE" type="number" step="1" min="0"></label></div>
+      <div class="row" style="margin-top:8px"><label>Adelante (mm)<input id="mX" type="number" step="2"></label><label>Lado 1-2-3 (mm)<input id="mY" type="number" step="2"></label><label>Giro antihorario (°)<input id="mG" type="number" step="1"></label></div>
+      <div class="row" style="margin-top:10px"><button class="primary" id="mSend">Comprobar y aplicar</button><button data-c="guardar">Guardar en la maestra</button><button data-c="robot defecto">Valores iniciales</button></div>
+      <p id="mRes" class="hint">La maestra comprueba alcance, límites, estabilidad, choques y velocidad de todo el ciclo. Si algo falla, conserva los valores anteriores.</p></div>
+    <div class="card"><h2>Fases del ciclo</h2><canvas id="phase"></canvas><div class="hint">Azul = apoyo, amarillo = vuelo, línea blanca = fase actual.</div></div>
+    <div class="card"><h2>ID de cada posición</h2><div class="row" id="map"></div><div class="row" style="margin-top:8px"><button class="primary" id="mapSend">Aplicar mapa</button><span class="hint">Para conservarlo, usa Guardar en la maestra.</span></div></div>
+  </section>
+
+  <section data-p="diag" class="card" hidden>
+    <div class="row"><button id="scan">Escanear bus</button><button data-c="s">Estado CAN</button><button id="csv">Descargar CSV</button></div>
+    <div class="tblw" style="margin-top:8px"><table><thead><tr><th>ID</th><th>Posición</th><th>Estado</th><th>MAC</th><th>Último dato</th><th>Lecturas/s</th></tr></thead><tbody id="tb"></tbody></table></div>
+  </section>
+  <section data-p="diag" class="card" hidden><h2>Consola</h2><div id="log"></div></section>
+</main>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id), N = 6;
+const POS = ["Delantera derecha", "Media derecha", "Trasera derecha", "Trasera izquierda", "Media izquierda", "Delantera izquierda"];
+/* Geometría: la misma de comun/robot.c (solo para dibujar; la inversa y la marcha las calcula la maestra). */
+const BX = [61.51, 5, -61.51, -61.51, 5, 61.51], BY = [46.66, 62.94, 46.66, -46.66, -62.94, -46.66];
+const DIR = [45, 90, 135, -135, -90, -45].map((d) => d * Math.PI / 180);
+const G = { L1: 50, h1: 6.05, L2: 60, L3: 104.4199, g: 0.355623, s: [1, -1, 1] };
+/* Desfases y fracción de apoyo: los mismos de comun/robot.c. */
+const GAIT = { ondulada: { d: [2/6, 1/6, 0, 3/6, 4/6, 5/6], a: .84 }, ripple: { d: [4/6, 2/6, 0, 3/6, 5/6, 1/6], a: .68 }, tripode: { d: [0, .5, 0, .5, 0, .5], a: .54 } };
+const COL = ["#57c7ff", "#b98cff", "#4fd18b"], JN = ["Coxa", "Fémur", "Tibia"];
+const css = { text: "#e6edf5", muted: "#8b98a8", line: "#2a3542", ok: "#4fd18b", warn: "#f5b94a", err: "#ff6b6b", acc: "#57c7ff" };
+const nuevo = () => ({ q: null, flags: 0, t: -1e9, n: 0, hz: 0, scan: "", mac: "" });
+let port, reader, writer, connected = false, chain = Promise.resolve(), bus = "?", sel = 0, cfg = null, sim = null;
+let legs = Array.from({ length: 7 }, nuevo), simp = Array(N).fill(null), hist = Array.from({ length: N }, () => []), rec = [], map = [1, 2, 3, 4, 5, 6];
+const fresco = (l) => performance.now() - l.t < 1000;
+const real = (i) => legs[map[i]];
+
+/* Puntos J0, J1, J2, pie en el marco del cuerpo. */
+function puntos(i, q) {
+  const t = q.map((v, k) => v * G.s[k]), ph = t[1] - t[2] - G.g, a = DIR[i] + t[0];
+  const r2 = G.L1 + G.L2 * Math.cos(t[1]), z2 = G.h1 + G.L2 * Math.sin(t[1]);
+  return [[0, 0], [G.L1, G.h1], [r2, z2], [r2 + G.L3 * Math.cos(ph), z2 + G.L3 * Math.sin(ph)]].map(([r, z]) => ({ x: BX[i] + r * Math.cos(a), y: BY[i] + r * Math.sin(a), z, r }));
+}
+
+/* ---------- tarjetas ---------- */
+POS.forEach((n, i) => {
+  const d = document.createElement("div"); d.className = "card leg"; d.id = "L" + i; d.onclick = () => { sel = i; };
+  d.innerHTML = `<div class="row"><b>${n}</b><span class="hint" id="id${i}"></span><span class="chip" id="st${i}" style="margin-left:auto">—</span></div><div class="bar"><i id="b${i}"></i></div><div class="hint" id="a${i}">—</div><div class="kv" id="kv${i}"></div>`;
+  $("legs").appendChild(d);
+  const l = document.createElement("label"); l.textContent = n; l.innerHTML += `<select id="mp${i}">${[1,2,3,4,5,6].map((k) => `<option>${k}</option>`).join("")}</select>`; $("map").appendChild(l); $("mp" + i).value = i + 1;
+});
+for (const b of document.querySelectorAll("#tabs button")) b.onclick = () => {
+  document.querySelectorAll("#tabs button").forEach((x) => x.classList.toggle("on", x === b));
+  document.querySelectorAll("[data-p]").forEach((s) => { s.hidden = s.dataset.p !== b.dataset.t; });
+};
+for (const b of document.querySelectorAll("[data-c]")) b.onclick = () => send(b.dataset.c);
+
+/* ---------- serie ---------- */
+function log(t, c = "") { const d = document.createElement("div"); d.className = c; d.textContent = t; const b = $("log"); b.appendChild(d); while (b.childElementCount > 500) b.firstChild.remove(); b.scrollTop = b.scrollHeight; }
+function send(line) {
+  if (!writer) { log("No hay maestra conectada.", "l-err"); return chain; }
+  log("> " + line, "l-tx");
+  chain = chain.then(() => writer && writer.write(new TextEncoder().encode(line + "\n"))).catch((e) => log("Error al escribir: " + e.message, "l-err"));
+  return chain;
+}
+async function connect() {
+  if (connected) return disconnect();
+  try {
+    port = await navigator.serial.requestPort(); await port.open({ baudRate: 115200 });
+    writer = port.writable.getWriter(); connected = true; leer(); setTimeout(init, 600);
+  } catch (e) { log("No se pudo conectar: " + e.message, "l-err"); $("cConn").title = e.message; }
+}
+async function cerrar() {
+  connected = false;
+  try { if (reader) await reader.cancel(); } catch (e) {}
+  try { if (writer) writer.releaseLock(); } catch (e) {}
+  writer = null;
+  try { if (port) await port.close(); } catch (e) {}
+  port = reader = null; bus = "?"; legs = legs.map(nuevo); sim = null; simp.fill(null);
+}
+async function disconnect() { await send("sim 0"); await send("v 0"); await cerrar(); }
+/* Solo lectura: bus en NORMAL, estado continuo, escaneo y configuración. */
+async function init() { for (const c of ["v 1", "n", "escanear", "robot"]) await send(c); }
+async function leer() {
+  const dec = new TextDecoder(); let buf = "";
+  while (connected && port && port.readable) {
+    reader = port.readable.getReader();
+    try {
+      for (;;) {
+        const { value, done } = await reader.read(); if (done) break;
+        buf += dec.decode(value, { stream: true }); const L = buf.split(/\r?\n/); buf = L.pop();
+        for (const s of L) if (s.trim()) linea(s.trim());
+      }
+    } catch (e) { if (connected) log("Lectura interrumpida: " + e.message, "l-err"); }
+    finally { try { reader.releaseLock(); } catch (e) {} }
+    if (connected) break;
+  }
+  if (connected) { log("Se perdió la conexión con la maestra.", "l-err"); await cerrar(); }
+}
+function linea(s) {
+  const f = s.split(",");
+  if (f[0] === "EST" && f.length >= 7) {
+    const l = legs[+f[2]]; if (!l) return;
+    l.q = [f[3], f[4], f[5]].map((v) => v / 1000); l.flags = +f[6]; l.t = performance.now(); l.n++;
+    const i = map.indexOf(+f[2]);
+    if (i >= 0) {
+      const h = hist[i], now = l.t / 1000, sp = simp[i]; h.push({ t: now, q: l.q, s: sp && sp.q }); while (h.length && h[0].t < now - 20) h.shift();
+      rec.push([(Date.now() / 1000).toFixed(3), f[2], POS[i], ...l.q, l.flags, ...(sp ? sp.q : ["", "", ""])]); if (rec.length > 40000) rec.splice(0, 5000);
+    }
+    return;
+  }
+  if (f[0] === "SIMP") { simp[+f[1] - 1] = { apoyo: f[2] === "1", av: +f[3], q: [f[4], f[5], f[6]].map((v) => v / 1000), p: [f[7], f[8], f[9]].map((v) => v / 10) }; return; }
+  if (f[0] === "SIM" && ["PARADA", "CORRE", "PAUSA"].includes(f[1])) { sim = { e: f[1], f: +f[2], x: +f[3], y: +f[4], r: +f[5], m: +f[6] }; return; }
+  let c = "";
+  if (f[0] === "ROB") {
+    cfg = { marcha: f[1], radio: +f[2], altura: +f[3], x: +f[4], y: +f[5], g: +f[6], e: +f[7], ciclo: +f[8] };
+    const m = f.slice(9, 15).map(Number); if (m.join() !== map.join()) hist = hist.map(() => []); map = m;
+    $("mTipo").value = cfg.marcha; [["mC", "ciclo"], ["mR", "radio"], ["mA", "altura"], ["mE", "e"], ["mX", "x"], ["mY", "y"], ["mG", "g"]].forEach(([id, k]) => { $(id).value = cfg[k]; }); map.forEach((v, i) => { $("mp" + i).value = v; });
+  } else if (f[0] === "SIM" && f[1] === "RECHAZADA") { const t = `Rechazada: ${f[2].replaceAll("_", " ")}${+f[3] ? " en " + POS[f[3] - 1].toLowerCase() : ""}, fase ${Math.round(f[4] * 100)} %.`; $("mRes").textContent = t; $("mRes").style.color = css.err; c = "l-err"; }
+  else if (f[0] === "SIM" && f[1] === "VALIDA") { $("mRes").textContent = `Ciclo válido. Margen mínimo ${f[2]} mm, velocidad articular ${f[3]} rad/s, separación entre patas ${f[4]} mm.`; $("mRes").style.color = css.ok; }
+  else if (f[0] === "CI") $("ciOut").innerHTML = f[1] === "OK" ? JN.map((n, k) => `<div><span class="hint">${n}</span><b>${(+f[k + 2]).toFixed(3)} rad</b></div>`).join("") : f[1] === "AUTOTEST" ? `<div><span class="hint">Autoprueba</span><b>${f[2]}</b><span class="hint">${f.slice(3).join(" · ")}</span></div>` : `<div><b>No se puede</b><span class="hint">${f[1].replace("_", " ")}</span></div>`;
+  else if (f[0] === "SCAN" && legs[+f[1]]) { legs[+f[1]].scan = f[2]; legs[+f[1]].mac = f[2] === "OK" ? f[3] : ""; }
+  else if (f[0] === "MODO") bus = f[1];
+  else if (f[0] === "NVS" || s.startsWith("ERROR,NVS")) { const t = { GUARDADA: "Guardado en la maestra.", CARGADA: "Configuración guardada cargada.", VACIA: "No hay configuración guardada.", IGNORADA: "Lo guardado no es válido: uso los valores iniciales." }[f[1]] || s; $("mRes").textContent = t; $("mRes").style.color = /GUARDADA|CARGADA/.test(f[1]) ? css.ok : css.warn; }
+  else if (s.includes("=== PRUEBA CAN")) { log("La maestra se reinició.", "l-warn"); sim = null; simp.fill(null); setTimeout(init, 400); }
+  else if (/^\s*>>|^STREAM/.test(s)) return;
+  if (/^(FALLA|ERROR)/.test(s)) c = "l-err"; else if (s.startsWith("AVISO")) c = "l-warn";
+  log(s, c);
+}
+
+/* ---------- dibujo ---------- */
+function lienzo(id) {
+  const c = $(id), d = devicePixelRatio || 1, W = c.clientWidth, H = c.clientHeight; if (!W) return null;
+  if (c.width !== Math.round(W * d)) c.width = Math.round(W * d); if (c.height !== Math.round(H * d)) c.height = Math.round(H * d);
+  const g = c.getContext("2d"); g.setTransform(d, 0, 0, d, 0, 0); g.clearRect(0, 0, W, H); g.font = "12px Segoe UI"; return { g, W, H };
+}
+function poli(g, P, col, w, dash) { g.strokeStyle = col; g.lineWidth = w; g.setLineDash(dash || []); g.beginPath(); P.forEach(([x, y], k) => k ? g.lineTo(x, y) : g.moveTo(x, y)); g.stroke(); g.setLineDash([]); }
+function estado(i) {
+  const l = real(i);
+  if (l.scan === "DUPLICADA") return ["ID repetido", "err"];
+  if (!fresco(l)) return [connected ? "no responde" : "sin datos", connected ? "err" : ""];
+  const nf = (l.flags >> 3) & 7; if (nf) return ["nFAULT " + JN.filter((_, k) => nf >> k & 1).join(", "), "err"];
+  return l.flags & 64 ? ["armada", "warn"] : ["responde", "ok"];
+}
+function vistaTop() {
+  const L = lienzo("top"); if (!L) return; const { g, W, H } = L, k = Math.min(W / 570, H / 530), X = (p) => W / 2 + p.y * k, Y = (p) => H / 2 + p.x * k;   /* como la vista de Fusion: frente abajo */
+  g.fillStyle = css.muted; g.textAlign = "center"; g.fillText("frente ↓", W / 2, H - 8);
+  const sup = simp.filter((s) => s && s.apoyo);
+  if (sup.length >= 3) { g.beginPath(); sup.forEach((s, n) => { const p = { x: s.p[0], y: s.p[1] }; n ? g.lineTo(X(p), Y(p)) : g.moveTo(X(p), Y(p)); }); g.closePath(); g.fillStyle = sim && sim.m < 0 ? "#ff6b6b33" : "#57c7ff1f"; g.fill(); }
+  g.beginPath(); for (let i = 0; i < N; i++) { const p = { x: BX[i], y: BY[i] }; i ? g.lineTo(X(p), Y(p)) : g.moveTo(X(p), Y(p)); } g.closePath(); g.fillStyle = "#2a3542"; g.fill();
+  for (let i = 0; i < N; i++) {
+    const l = real(i), s = simp[i], e = estado(i), col = { ok: css.ok, warn: css.warn, err: css.err, "": css.muted }[e[1]];
+    if (s) { const P = puntos(i, s.q).map((p) => [X(p), Y(p)]); poli(g, P, s.apoyo ? css.acc : css.warn, 2, [5, 4]); g.fillStyle = s.apoyo ? css.acc : css.warn; g.beginPath(); g.arc(...P[3], s.apoyo ? 6 : 4, 0, 7); g.fill(); }
+    if (l.q && fresco(l)) { const P = puntos(i, l.q).map((p) => [X(p), Y(p)]); poli(g, P, col, i === sel ? 5 : 3); g.fillStyle = col; P.forEach((p) => { g.beginPath(); g.arc(...p, 3, 0, 7); g.fill(); }); }
+    const t = { x: BX[i] + 62 * Math.cos(DIR[i] + .45), y: BY[i] + 62 * Math.sin(DIR[i] + .45) }; g.fillStyle = css.text; g.fillText("ID " + map[i], X(t), Y(t) + 4);
+  }
+  g.fillStyle = css.text; g.beginPath(); g.arc(W / 2, H / 2, 3, 0, 7); g.fill();
+}
+function vistaLado() {
+  const L = lienzo("side"); if (!L) return; const { g, W, H } = L, k = Math.min((W - 40) / 240, (H - 30) / 240), X = (p) => 24 + p.r * k, Y = (p) => H * .48 - p.z * k;
+  $("sideT").textContent = "Vista lateral · " + POS[sel];
+  if (cfg) { const y = Y({ z: -cfg.altura }); poli(g, [[0, y], [W, y]], css.line, 2); g.fillStyle = css.muted; g.textAlign = "left"; g.fillText("suelo", 6, y + 14); }
+  const l = real(sel), s = simp[sel];
+  if (s) poli(g, puntos(sel, s.q).map((p) => [X(p), Y(p)]), s.apoyo ? css.acc : css.warn, 2, [5, 4]);
+  if (l.q && fresco(l)) poli(g, puntos(sel, l.q).map((p) => [X(p), Y(p)]), css.ok, 4);
+}
+function vistaHist() {
+  const L = lienzo("hist"); if (!L) return; const { g, W, H } = L, now = performance.now() / 1000, h = hist[sel]; let m = .5;
+  for (const p of h) for (const v of [...p.q, ...(p.s || [])]) m = Math.max(m, Math.abs(v)); m *= 1.1;
+  const X = (t) => 40 + (W - 48) * (1 - (now - t) / 20), Y = (v) => H / 2 - v / m * (H / 2 - 14);
+  g.fillStyle = css.muted; g.textAlign = "left"; for (const v of [-m, 0, m].map((x) => x * .9)) { poli(g, [[40, Y(v)], [W, Y(v)]], css.line, 1); g.fillText(v.toFixed(1), 6, Y(v) + 4); }
+  for (let k = 0; k < 3; k++) { if (h.length > 1) poli(g, h.map((p) => [X(p.t), Y(p.q[k])]), COL[k], 2); const s = h.filter((p) => p.s); if (s.length > 1) poli(g, s.map((p) => [X(p.t), Y(p.s[k])]), COL[k], 1, [4, 4]); }
+}
+function vistaFase() {
+  const L = lienzo("phase"); if (!L) return; const { g, W, H } = L, A = 46, w = W - A - 8, r = (H - 10) / N, z = GAIT[cfg ? cfg.marcha : "ondulada"]; g.textAlign = "left";
+  for (let i = 0; i < N; i++) {
+    const y = 5 + i * r; g.fillStyle = css.text; g.fillText("ID " + map[i], 6, y + r / 2 + 4); g.fillStyle = "#1f6b94"; g.fillRect(A, y + 3, w, r - 6); g.fillStyle = css.warn;
+    const a = z.d[i], b = a + 1 - z.a; g.fillRect(A + a * w, y + 3, (Math.min(b, 1) - a) * w, r - 6); if (b > 1) g.fillRect(A, y + 3, (b - 1) * w, r - 6);
+  }
+  if (sim) poli(g, [[A + sim.f * w, 2], [A + sim.f * w, H - 2]], "#fff", 2);
+}
+function chip(id, t, c) { $(id).textContent = t; $(id).className = "chip " + (c || ""); }
+function pinta() {
+  const nr = legs.slice(1).filter(fresco).length;
+  chip("cConn", connected ? "Maestra conectada" : "Desconectada", connected ? "ok" : ""); chip("cBus", "Bus: " + bus, bus === "NORMAL" ? "ok" : connected ? "warn" : "");
+  chip("cLegs", `Patas: ${nr}/6`, nr === 6 ? "ok" : connected ? "warn" : ""); chip("cSim", "Simulación: " + (sim ? { PARADA: "parada", CORRE: "en marcha", PAUSA: "en pausa" }[sim.e] : "—"), sim && sim.e === "CORRE" ? "ok" : "");
+  $("conn").textContent = connected ? "Desconectar" : "Conectar maestra";
+  document.querySelectorAll("[data-c],#scan,#ci,#mSend,#mapSend,#paro").forEach((b) => { b.disabled = !connected; }); $("csv").disabled = !rec.length;
+  const u = (v, d, s) => v.toFixed(d) + s;
+  $("vX").textContent = sim ? u(sim.x, 0, " mm") : "—"; $("vY").textContent = sim ? u(sim.y, 0, " mm") : "—"; $("vR").textContent = sim ? u(sim.r, 1, "°") : "—"; $("vF").textContent = sim ? u(sim.f * 100, 0, " %") : "—";
+  $("vM").textContent = sim ? u(sim.m, 0, " mm") : "—"; $("vM").style.color = sim && sim.m < 20 ? css.err : "";
+  for (let i = 0; i < N; i++) {
+    const l = real(i), s = simp[i], e = estado(i), ok = l.q && fresco(l), f = (v) => (v >= 0 ? "+" : "") + v.toFixed(3);
+    chip("st" + i, ...e); $("id" + i).textContent = "ID " + map[i]; $("L" + i).classList.toggle("sel", i === sel);
+    $("b" + i).style.width = (s ? s.av : 0) + "%"; $("b" + i).className = s && !s.apoyo ? "air" : ""; $("a" + i).textContent = s ? `${s.apoyo ? "apoyo" : "vuelo"} ${s.av} % (simulado)` : "sin simulación";
+    let h = "<span></span>" + JN.map((n) => `<span class="hint">${n}</span>`).join("") + "<span>Leído</span>" + [0, 1, 2].map((k) => `<span>${ok ? f(l.q[k]) : "—"}</span>`).join("") + "<span>Simulado</span>" + [0, 1, 2].map((k) => `<span>${s ? f(s.q[k]) : "—"}</span>`).join("");
+    h += "<span>Pie leído</span>" + (ok ? (({ x, y, z }) => [x, y, z])(puntos(i, l.q)[3]).map((v, k) => `<span>${"xyz"[k]} ${v.toFixed(0)}</span>`).join("") : "<span>—</span><span>—</span><span>—</span>");
+    $("kv" + i).innerHTML = h;
+  }
+  $("legT").textContent = `${POS[sel]} · ID ${map[sel]}`;
+  $("tb").innerHTML = [1, 2, 3, 4, 5, 6].map((p) => { const i = map.indexOf(p), l = legs[p], e = estado(i); return `<tr><td>${p}</td><td>${POS[i]}</td><td>${e[0]}</td><td>${l.mac || "—"}</td><td>${l.t > 0 ? ((performance.now() - l.t) / 1000).toFixed(1) + " s" : "—"}</td><td>${l.hz.toFixed(0)}</td></tr>`; }).join("");
+  vistaTop(); vistaLado(); vistaHist(); vistaFase();
+}
+
+/* ---------- controles ---------- */
+$("conn").onclick = connect;
+const paro = () => { send("k"); send("sim 0"); };
+$("paro").onclick = paro;
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && connected) { e.preventDefault(); paro(); } });
+$("scan").onclick = () => send("escanear");
+$("ci").onclick = () => send(`ci ${+$("ix").value} ${+$("iy").value} ${+$("iz").value}`);
+$("mSend").onclick = () => send("config " + ["mR", "mA", "mX", "mY", "mG", "mE", "mC"].map((id) => +$(id).value).join(" ") + " " + $("mTipo").value);
+$("mapSend").onclick = () => { const m = POS.map((_, i) => +$("mp" + i).value); if (new Set(m).size < 6) { alert("Hay un ID repetido en el mapa."); return; } send("mapa " + m.join(" ")); };
+$("csv").onclick = () => {
+  const b = new Blob(["t_s,id,posicion,coxa,femur,tibia,flags,sim_coxa,sim_femur,sim_tibia\n" + rec.map((r) => r.join(",")).join("\n")], { type: "text/csv" }), a = document.createElement("a");
+  a.href = URL.createObjectURL(b); a.download = `robot_${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.csv`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+};
+if (!("serial" in navigator)) { $("noserial").hidden = false; $("conn").disabled = true; }
+setInterval(() => legs.forEach((l) => { l.hz = l.n; l.n = 0; }), 1000);
+setInterval(pinta, 100); pinta();
+</script>
+</body>
+</html>

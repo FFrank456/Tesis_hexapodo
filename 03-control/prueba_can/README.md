@@ -135,6 +135,33 @@ El selector de arriba muestra las 6 patas (*responde*, *armada*, *nFAULT*, *ID r
 
 Mientras algo se mueve, la maestra imprime `POS,...` cada 0,5 s y `LLEGO,femur,+0.498 rad,1.4 s` cuando la articulación llega. Se puede enviar un objetivo nuevo en pleno movimiento.
 
+### Robot completo, fase 1: `robot_dashboard.html` (25-nov)
+
+Lectura de las seis patas, cinemática inversa y marcha **simulada**. No arma ni mueve motores: `comun/robot_sim.c` no usa CAN y la página solo envía `n`, `v`, `escanear`, `s`, los comandos de abajo y el PARO (que suelta los motores).
+
+| Archivo | Qué hace |
+|---|---|
+| `comun/robot.c` | Directa, inversa, montaje de las 6 patas, marchas, validación y margen de estabilidad (cálculo puro) |
+| `comun/robot_sim.c` | Comandos y simulación en la maestra |
+| `tests/test_robot.js` | `node tests/test_robot.js`: traduce `robot.c` a JavaScript y prueba la misma lógica (doble precisión, no la del S3) |
+
+| Comando | Qué hace |
+|---|---|
+| `robot` · `robot defecto` | Muestra la configuración · la restablece |
+| `marcha ondulada\|ripple\|tripode` | Tipo de marcha |
+| `config radio altura x y giro elevacion ciclo marcha` | Todo a la vez (también `postura`, `paso`, `marcha` y `ciclo` por separado). Solo se aplica si el ciclo entero es posible: alcance, límites, estabilidad, separación ≥ 25 mm entre patas vecinas y velocidad ≤ 2 rad/s |
+| `guardar` | Configuración y mapa en la flash de la maestra; al arrancar se usan solo si siguen siendo válidos |
+| `ciclo s` | Duración del ciclo, 4 a 60 s |
+| `sim 1` · `sim pausa` · `sim sig` · `sim 0` | Simulación |
+| `mapa` + 6 IDs | ID CAN de cada posición: DD MD TD TI MI DI |
+| `ci x y z` · `ci test` | Inversa de una pata (mm, marco de J0) · 2000 poses de ida y vuelta en la propia placa |
+
+**Referencia (vista superior del usuario, 25-nov):** la pata *n* lleva el ID *n* y el frente es el lado de las patas 1 y 6, donde va la cámara. Vistas desde arriba van en sentido antihorario: 1 delantera, 2 media y 3 trasera de un lado; 4 trasera, 5 media y 6 delantera del otro. "Derecha" (1-2-3) e "izquierda" (4-5-6) son las de quien mira al robot de frente: el lado 1-2-3 es el izquierdo del propio robot y es +y. La numeración de `fusion-ensamble/1_estructura.py` no coincide con esta: no se usa para los IDs.
+**Seguridad de la maestra (25-nov):** el PARO sale aunque la maestra esté en ESCUCHA; con patas armadas se bloquean `t`, `l` y `r`, que cortaban el latido, y `n` ya no reinicia el bus; tras un BUS_OFF las patas dejan de figurar armadas; un ESTADO o PONG atrasado no cuenta como respuesta a una orden; una línea de más de 63 caracteres se descarta entera.
+
+**Supuestos por confirmar en el robot:** los signos de encoder son iguales en las seis (en Fusion son copias giradas, no espejadas); el cero es la pose cero del CAD; el centro de masa está en el centro del cuerpo. Los límites usados son la intersección del CAN y los provisionales de MATLAB: coxa −0.5…0.6, fémur ±1 y tibia −1…0.7 rad.
+
+**Resultado:** con tibia ≤ 0.7 rad, radio 182 y altura 75 mm, el paso máximo es de 28 mm con 15 mm de elevación, 18 mm con 20 mm y ninguno (< 2 mm) con 25 mm. El límite de la tibia es lo que más restringe la marcha; medir su rango real antes de ampliarlo.
 ## Secuencia de prueba
 
 Haz los pasos en orden y no pases al siguiente hasta que el anterior dé el resultado esperado. **Los motores van desconectados** durante toda la prueba.

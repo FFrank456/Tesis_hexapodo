@@ -13,6 +13,7 @@
  * se pulse 'n'. Asi una placa con un problema no tumba el bus de la otra.
  */
 #include "prueba_can.h"
+#include "robot_sim.h"
 
 #include <ctype.h>
 #include <fcntl.h>
@@ -188,6 +189,7 @@ static void ayuda(void)
         puts("  d            desarmar (suelta las articulaciones);  'd todas' = las 6");
         puts("  cero f|t|c|todo   el encoder vale 0 en la pose actual (desarmada)");
         puts("  Rangos: coxa -0.5..1.5, femur -1..1, tibia -1..0.7 rad (respecto del cero)");
+        robot_ayuda();
     } else {
         puts("  p  envia una trama 0x20x con un contador hacia la maestra");
     }
@@ -273,6 +275,11 @@ static void procesar_alertas(uint32_t a)
     if (a & TWAI_ALERT_RX_QUEUE_FULL) puts("AVISO,cola_rx_llena");
     if (a & TWAI_ALERT_BUS_OFF) {
         puts("ERROR,BUS_OFF: demasiadas transmisiones fallidas. Vuelvo a ESCUCHA.");
+        if (s_cfg->es_maestra) {
+            /* Sin latido las patas se sueltan solas en 0,5 s: no mostrarlas como armadas. */
+            if (alguna_armada()) puts("AVISO,BUS_OFF con patas armadas: se sueltan solas en 0,5 s");
+            for (int p = 1; p <= LEG_CAN_MAX_LEGS; p++) { s_patas[p].armada = s_patas[p].vista = false; s_patas[p].pendientes = 0; }
+        }
         iniciar(TWAI_MODE_LISTEN_ONLY);
     }
 }
@@ -463,7 +470,8 @@ static void ping(void)
 static void paro(void)
 {
     for (int p = 1; p <= LEG_CAN_MAX_LEGS; p++) { s_patas[p].armada = false; s_patas[p].pendientes = 0; }
-    if (!requiere_normal()) return;
+    /* Un PARO nunca se queda sin enviar por estar en ESCUCHA. */
+    if (s_modo != TWAI_MODE_NORMAL) { puts("AVISO,paso a NORMAL para poder enviar el PARO"); iniciar(TWAI_MODE_NORMAL); }
     vaciar_rx();
     tx_res_t r = TX_SIN_ACK;
     for (int i = 0; i < 3 && r != TX_OK; i++) r = enviar(ID_PARO, NULL, 0, false);
@@ -538,7 +546,11 @@ static bool orden(const uint8_t *d, uint8_t len, twai_message_t *resp)
         return false;
     }
     int64_t t1;
-    if (!esperar_trama(s_sel, resp, &t1)) {
+    bool hay = esperar_trama(s_sel, resp, &t1);
+    /* Un ESTADO o PONG atrasado no es la respuesta a esta orden. */
+    for (int i = 0; i < 3 && hay && (resp->data[0] == LEG_CAN_STATUS || resp->data[0] == LEG_CAN_PONG); i++)
+        hay = esperar_trama(s_sel, resp, &t1);
+    if (!hay) {
         printf("FALLA,la pata %d no respondio en 50 ms (revisa su ID con CAN,ID por serie)\n", s_sel);
         return false;
     }
@@ -798,14 +810,27 @@ static void enviar_contador(void)
     else puts("PASA,la maestra dio ACK (en su monitor debe aparecer la linea RX)");
 }
 
+/* Estas pruebas cortan el latido: con una pata armada, la soltarian. */
+static bool bloqueado_por_armada(char c)
+{
+    if (!s_cfg->es_maestra || !alguna_armada() || !strchr("tlr", c)) return false;
+    puts("AVISO,hay patas armadas: desarma con 'd todas' antes de esta prueba");
+    return true;
+}
+
 static void comando(char c)
 {
-    switch (tolower((unsigned char)c)) {
+    c = (char)tolower((unsigned char)c);
+    if (bloqueado_por_armada(c)) return;
+    switch (c) {
     case 'h': ayuda(); break;
     case 's': estado(); break;
     case 'r': medir_crx(); break;
     case 't': autotest(); break;
-    case 'n': iniciar(TWAI_MODE_NORMAL); break;
+    case 'n':   /* si ya esta en NORMAL no se reinstala: cortaria el latido */
+        if (s_instalado && s_modo == TWAI_MODE_NORMAL) printf("MODO,%s\n", nombre_modo(s_modo));
+        else iniciar(TWAI_MODE_NORMAL);
+        break;
     case 'l': iniciar(TWAI_MODE_LISTEN_ONLY); break;
     case 'z': s_tx_ok = s_tx_fallo = s_rx = 0; puts("CONTADORES,0"); break;
     case 'p': if (s_cfg->es_maestra) ping(); else enviar_contador(); break;
@@ -849,6 +874,7 @@ static void procesar_linea(char *l)
         w = strtok(NULL, " ,");
         if (!w) return;
     }
+    if (s_cfg->es_maestra && robot_comando(w)) return;   /* cinematica y marcha: no usan CAN */
     char *x = strtok(NULL, " ,"), *y = strtok(NULL, " ,");
     if (!x && strlen(w) == 1) { comando(w[0]); return; }
     if (!s_cfg->es_maestra) { puts("AVISO,la pata solo acepta comandos de una letra"); return; }
@@ -891,6 +917,7 @@ void prueba_can_ejecutar(const prueba_can_cfg_t *cfg)
     printf("\n=== PRUEBA CAN: %s ===\n", cfg->nombre);
     printf("PLACA,TX=GPIO%d->CTX,RX=GPIO%d<-CRX,500000 bit/s,pata_id=%d,rol=%s\n",
            cfg->pin_tx, cfg->pin_rx, pata_actual(), cfg->es_maestra ? "MAESTRA" : "PATA");
+    if (cfg->es_maestra) robot_iniciar();
     iniciar(TWAI_MODE_LISTEN_ONLY);
     medir_crx();
     estado();
@@ -898,6 +925,7 @@ void prueba_can_ejecutar(const prueba_can_cfg_t *cfg)
 
     char linea[64];
     size_t n = 0;
+    bool larga = false;   /* una linea cortada podria parecer otra orden: se descarta entera */
     while (true) {
         twai_message_t f;
         if (s_instalado && twai_receive(&f, ESPERA(5)) == ESP_OK) procesar_rx(&f);
@@ -905,16 +933,21 @@ void prueba_can_ejecutar(const prueba_can_cfg_t *cfg)
 
         uint32_t a;
         if (s_instalado && twai_read_alerts(&a, 0) == ESP_OK) procesar_alertas(a);
-        if (s_cfg->es_maestra) latido();
+        if (s_cfg->es_maestra) { latido(); robot_sim_tick(); }
 
         /* Las ordenes se escriben y se confirman con Enter. */
         char c;
         for (int i = 0; i < 16 && read(STDIN_FILENO, &c, 1) == 1; i++) {
             if (c == '\r' || c == '\n') {
-                if (n) { linea[n] = '\0'; putchar('\n'); procesar_linea(linea); n = 0; }
+                if (larga) puts("\nAVISO,linea demasiado larga: descartada");
+                else if (n) { linea[n] = '\0'; putchar('\n'); procesar_linea(linea); }
+                n = 0;
+                larga = false;
             } else if ((c == '\b' || c == 0x7F) && n) {
                 n--; fputs("\b \b", stdout);
-            } else if (isprint((unsigned char)c) && n < sizeof linea - 1) {
+            } else if (isprint((unsigned char)c) && n >= sizeof linea - 1) {
+                larga = true;
+            } else if (isprint((unsigned char)c)) {
                 linea[n++] = c; putchar(c);   /* eco: el monitor no muestra lo que se escribe */
             }
             fflush(stdout);

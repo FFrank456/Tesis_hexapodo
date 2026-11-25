@@ -12,7 +12,7 @@
 void app_main(void)
 {
     /* Con el driver instalado la consola tambien puede leer teclas. */
-    usb_serial_jtag_driver_config_t usb = {.rx_buffer_size = 256, .tx_buffer_size = 1024};
+    usb_serial_jtag_driver_config_t usb = {.rx_buffer_size = 256, .tx_buffer_size = 4096};
     ESP_ERROR_CHECK(usb_serial_jtag_driver_install(&usb));
     usb_serial_jtag_vfs_use_driver();
 
