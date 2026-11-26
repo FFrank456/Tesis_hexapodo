@@ -180,7 +180,26 @@ A 500 kbit/s el bus admite unos 100 m de cable, y aquí mide menos de 2 m. El co
 | Maestra + 5 | 3000/3000 pings, 0 errores; CRX en 1 |
 | Placa 5 sola (`CAN,STATUS` por USB) | leg_id 5, 0 errores |
 | Maestra + 5 + 6 | 10/10 escaneos con las dos, 4000/4000 pings, 0 errores |
-| Falta | Añadir la placa 1 (sospechosa sin confirmar) y la torre 2-3-4 |
+| Maestra + 1 + 5 + 6 | Bloqueado al conectar la 1: CRX en 0 desde el inicio, 0/10 escaneos, BUS_OFF |
+| Maestra + 5 + 6, sin CANH/CANL de la 1 | Bus libre otra vez, la 5 da 1000/1000. La 6 se cae porque se conectaba por el conector de la 1 |
+| Placa 1 aislada (`CAN,STATUS` por COM6) | CRX en 0, REC 128, 6,1 M errores de bus que suben ~30 000/s, **TEC 0**: su programa no transmite, pero su módulo ve dominante |
+| Maestra + 2 + 5 + 6, con `diag_placa` | 121/121 escaneos por pata, 1000/1000 pings a cada una (ida y vuelta 262–385 µs de media, máx. 1,2 ms), TEC/REC 0, 0 errores |
+| Falta | Placas 3 y 4. Reparar la placa 1 |
+
+**Registro de errores del 25-nov:**
+
+- **Placa 1: bloquea el bus.** Basta conectar **solo su CANL** para que el bus quede en dominante. Aislada, su propio módulo ve dominante. Causas posibles, de más a menos probable:
+  - un puente de estaño entre CANL y GND, que en P1/P2 son pines vecinos (2 y 3);
+  - el cable o el conector cruzado;
+  - un corto CANL–GND en el módulo;
+  - CTX (IO21 / J4-3) en 0 V;
+  - el transceptor dañado.
+
+  Para distinguirlas, medir con la placa apagada CANL–GND (< 10 Ω = corto) y, encendida, CANH, CANL y CTX (≈ 2,3 V, ≈ 2,3 V y 3,3 V). Pendiente de medir.
+- **Maestra: módulo con CRX flotando (18:55).** CRX saltaba al azar y no seguía a CTX, con 0/200 tramas en el autotest. Era un cable suelto o falta de alimentación del módulo. Se arregló reacomodando los cables: después pasó tres veces seguidas (200/200).
+- **Bus otra vez en dominante (≈ 19:40)**, con la maestra sana (su CTX en 1). Ocurrió después de manipular las placas. Pendiente de aislar pata por pata.
+- **COM9 ocupado ("acceso denegado")** al cargar: lo tenía el dashboard abierto. Hay que desconectar el dashboard antes de usar `esptool`.
+- **Consola de la maestra por el conector UART (CH343, COM9):** `diag_placa` usa allí UART a 115200. `prueba_can` sigue usando el USB nativo (COM4).
 
 **Supuestos por confirmar en el robot:** los signos de encoder son iguales en las seis (en Fusion son copias giradas, no espejadas); el cero es la pose cero del CAD; el centro de masa está en el centro del cuerpo. Los límites usados son la intersección del CAN y los provisionales de MATLAB: coxa −0.5…0.6, fémur ±1 y tibia −1…0.7 rad.
 
@@ -289,3 +308,52 @@ En la maestra, pulsa `n` y después `p`: debe responder `PONG`, porque el firmwa
 2. Pon el fémur horizontal y la tibia alineada con él. En la maestra: `n`, `cero todo` y `e`, que debe dar 0 en las tres.
 3. Enciende V_MOT. Después `a` para armar, `f -0.3` para que el fémur suba 0.3 rad (el encoder negativo lo sube), `t 0.3`, `ft 0 0`.
 4. `d` para soltar. Ojo: al desarmar, el fémur queda sin fuerza y cae.
+
+## Diagnóstico de una placa sola (`diag_placa/`)
+
+Prueba el CAN de **una placa sin otra en el bus**. Una placa sola no puede hacer un intercambio CAN real, porque nadie le da el ACK, así que prueba cada tramo por separado: la línea CTX, el eco del módulo, el reposo del bus y el controlador TWAI en modo NO_ACK con autorrecepción. Sirve para encontrar la placa que bloquea el bus. El mismo código compila para la MOD_DRV (`esp32`) y para la maestra (`esp32s3`).
+
+| Prueba | Qué hace | Si falla |
+|---|---|---|
+| 1 `ctx` | CTX libre, solo con el pull-up interno | Corto de CTX (J4-3) a GND: esa placa bloquea el bus |
+| 2 `eco` | CTX=1 → CRX debe dar 1; CTX=0 → CRX debe dar 0, por GPIO | Corto en CTX, módulo sin 3,3 V, CANH/CANL en corto o módulo dañado |
+| 3 `reposo` | CTX=1 durante 100 ms: CRX nunca debe bajar | Módulo o bus en dominante |
+| 4 `twai` | 200 tramas a 500 kbit/s con datos verificados | Controlador, pines o contacto intermitente |
+| 5 `motores` | nFAULT de los 3 DRV8876 y encoders (solo MOD_DRV) | Driver en falla o encoder sin señal |
+
+Al final imprime `RESULTADO,CAN,PASA` o la falla con la causa probable y qué medir. Para que el eco y el reposo culpen a la placa, sus CANH y CANL deben estar sueltos: conectada, un bus forzado por otra placa da CRX en 0.
+
+**Bus con las patas, desde la maestra** (solo IDENT, PING y ESTADO; nunca arma):
+
+- `escanear [N]`: qué patas responden, con su MAC, en N rondas.
+- `rafaga P [n]`: n pings a la pata P.
+- `salud S H`: S segundos pidiendo ESTADO a todas las patas, H ciclos por segundo. Informa cada segundo de las respuestas, la latencia, TEC/REC, los errores, los BUS_OFF y la carga.
+
+Los resultados posibles son:
+
+- `SIN_ACK`: nadie más hay en el bus.
+- `NO_RESPONDE`: hay placas en el bus, pero ninguna con ese ID.
+- `NO_SALIO`: el bus está pegado en dominante.
+
+Otros comandos: `escucha` (5 s sin transmitir, con la placa conectada al bus), `m` (monitor cada 1 s; gira a mano una articulación y deben cambiar sus cuentas), `cero`, `i` (MAC e ID de pata) y `h`.
+
+**Seguridad.** Los 6 IN de los DRV8876 quedan en 0, así que no se mueve ningún motor. La NVS solo se lee: el ID de pata y la configuración de `pata_MOD_DRV` se conservan. Las pruebas 1 a 4 ponen el bus en dominante unos microsegundos, por eso hay que correrlas con **CANH y CANL desconectados**.
+
+**Compilar** (desde `diag_placa`, después de cargar el perfil de ESP-IDF):
+
+```
+idf.py -B build_esp32 -D SDKCONFIG=build_esp32/sdkconfig -D IDF_TARGET=esp32 build
+idf.py -B build_s3 -D SDKCONFIG=build_s3/sdkconfig -D IDF_TARGET=esp32s3 build
+```
+
+**Cargar** (desde la carpeta `build_esp32` o `build_s3`; el puerto es el de esa placa):
+
+```
+esptool.py --chip esp32 -p COM6 -b 460800 --before default_reset --after hard_reset write_flash '@flash_args'
+```
+
+**Monitor:** 115200 baudios en las dos placas; en la maestra, por el conector «UART». La prueba se corre sola al arrancar; `todo` la repite.
+
+**Dashboard:** `diag_placa/diag_dashboard.html`, que se abre en Chrome o Edge. Tiene botones para cada prueba y tarjetas con PASA/FALLA. Muestra el diagnóstico, la escucha del bus, el monitor con gráfica de CRX y de los encoders, y la consola. Lleva además un registro de las placas probadas, que se guarda en el navegador y se puede descargar como CSV. La placa se reconoce por su MAC.
+
+**Volver al firmware normal.** En la pata, desde `../pata_MOD_DRV/build`, se usa el mismo `esptool.py` con `--chip esp32`. En la maestra, desde `maestra_s3/build_cli`, con `--chip esp32s3`.

@@ -1,0 +1,575 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Diagnóstico CAN</title>
+<style>
+:root{
+  --bg:#f4f5f7; --panel:#fff; --text:#1d2330; --muted:#667085; --line:#d9dde5;
+  --ok:#1a7f37; --ok-bg:#e6f4ea; --bad:#c62828; --bad-bg:#fdecea; --warn:#9a6700; --warn-bg:#fff4d6;
+  --accent:#2563eb; --mono:Consolas,"Cascadia Mono",monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root{ --bg:#14171c; --panel:#1d2128; --text:#e6e9ef; --muted:#98a2b3; --line:#333a45;
+    --ok:#4ac26b; --ok-bg:#16301f; --bad:#ff7b72; --bad-bg:#3a1d1d; --warn:#e3b341; --warn-bg:#352a10; --accent:#6ea8fe; }
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 "Segoe UI",system-ui,sans-serif}
+header{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:12px 16px;background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:2}
+header h1{font-size:17px;margin:0 12px 0 0}
+#estado{font-weight:600}
+main{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);gap:14px;padding:14px 16px;max-width:1500px;margin:auto}
+@media (max-width:950px){ main{grid-template-columns:1fr} }
+section{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 14px}
+section h2{font-size:14px;margin:0 0 10px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+button{font:inherit;padding:6px 12px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--text);cursor:pointer}
+button:hover{border-color:var(--accent)}
+button.prim{background:var(--accent);border-color:var(--accent);color:#fff}
+button:disabled{opacity:.45;cursor:default}
+.fila{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.info{display:grid;grid-template-columns:auto 1fr;gap:2px 12px;font-family:var(--mono);font-size:13px}
+.info b{font-family:"Segoe UI",sans-serif;color:var(--muted);font-weight:500}
+.pruebas{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px}
+.card{border:1px solid var(--line);border-radius:8px;padding:10px;min-height:118px}
+.card .tit{display:flex;justify-content:space-between;align-items:center;font-weight:600}
+.card .det{font-family:var(--mono);font-size:12px;color:var(--muted);margin-top:6px;white-space:pre-wrap}
+.card .que{font-size:12px;color:var(--muted)}
+.badge{font-size:12px;font-weight:700;padding:2px 8px;border-radius:10px;background:var(--line);color:var(--muted)}
+.PASA{background:var(--ok-bg);color:var(--ok)} .FALLA{background:var(--bad-bg);color:var(--bad)} .DUDOSA{background:var(--warn-bg);color:var(--warn)}
+.card.PASA{background:var(--panel);border-color:var(--ok)} .card.FALLA{background:var(--panel);border-color:var(--bad)} .card.DUDOSA{background:var(--panel);border-color:var(--warn)}
+#diag{border-radius:8px;padding:12px;border:1px solid var(--line);white-space:pre-wrap;font-size:13px}
+#diag .res{font-size:16px;font-weight:700;margin-bottom:6px}
+#diag.PASA{background:var(--ok-bg)} #diag.FALLA{background:var(--bad-bg)} #diag.DUDOSA{background:var(--warn-bg)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{text-align:left;padding:5px 6px;border-bottom:1px solid var(--line)}
+th{color:var(--muted);font-weight:500}
+td.mono{font-family:var(--mono)}
+.mot{display:grid;grid-template-columns:70px 1fr 1fr 1fr 1fr;gap:4px 10px;font-family:var(--mono);font-size:13px;align-items:center}
+.mot .h{color:var(--muted);font-family:"Segoe UI",sans-serif;font-size:12px}
+canvas{width:100%;height:170px;border:1px solid var(--line);border-radius:6px;background:var(--bg)}
+#consola{height:300px;overflow:auto;font-family:var(--mono);font-size:12px;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:6px;white-space:pre-wrap}
+#consola .tx{color:var(--accent)} #consola .log{color:var(--muted)}
+input[type=text]{font:inherit;padding:5px 8px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--text)}
+.nota{font-size:12px;color:var(--muted)}
+.ancho{grid-column:1/-1}
+</style>
+</head>
+<body>
+<header>
+  <h1>Diagnóstico CAN de una placa</h1>
+  <button id="bConectar" class="prim">Conectar</button>
+  <button id="bReiniciar" disabled>Reiniciar placa</button>
+  <span id="estado">Desconectado</span>
+  <span class="nota">Firmware <code>diag_placa</code> · 115200 baudios · Chrome o Edge</span>
+</header>
+
+<main>
+  <section>
+    <h2>Pruebas</h2>
+    <div class="fila" style="margin-bottom:10px">
+      <button class="cmd prim" data-c="todo" disabled>Correr todo</button>
+      <button class="cmd" data-c="ctx" disabled>1 CTX</button>
+      <button class="cmd" data-c="eco" disabled>2 Eco</button>
+      <button class="cmd" data-c="reposo" disabled>3 Reposo</button>
+      <button class="cmd" data-c="twai" disabled>4 TWAI</button>
+      <button class="cmd" data-c="motores" disabled>5 Motores</button>
+      <button class="cmd" data-c="escucha" disabled>Escuchar bus 5 s</button>
+      <button class="cmd" data-c="i" disabled>Info</button>
+    </div>
+    <p class="nota" style="margin:0 0 10px">Para que el resultado sea solo de esta placa, desconecta <b>CANH y CANL</b> antes de correr las pruebas 1 a 4. Ninguna prueba mueve motores.</p>
+    <div class="pruebas" id="pruebas"></div>
+  </section>
+
+  <section>
+    <h2>Placa</h2>
+    <div class="info">
+      <b>Placa</b><span id="iPlaca">—</span>
+      <b>MAC</b><span id="iMac">—</span>
+      <b>Identificada como</b><span id="iQuien">—</span>
+      <b>ID en NVS</b><span id="iId">—</span>
+      <b>Pines CAN</b><span id="iPines">—</span>
+    </div>
+    <h2 style="margin-top:14px">Diagnóstico</h2>
+    <div id="diag">Todavía no se corrió ninguna prueba completa. Pulsa <b>Correr todo</b>.</div>
+    <h2 style="margin-top:14px">Escucha del bus</h2>
+    <div id="escucha" class="nota">Sin datos. Con la placa conectada al bus, «Escuchar bus 5 s» cuenta las tramas sin transmitir.</div>
+  </section>
+
+  <section>
+    <h2>Monitor</h2>
+    <div class="fila" style="margin-bottom:8px">
+      <button id="bMon" disabled>Iniciar monitor</button>
+      <button class="cmd" data-c="cero" disabled>Encoders a 0</button>
+      <span class="nota">Cada 1 s: % del tiempo con CRX en 0 (debe ser 0 con la placa sola) y encoders. Gira a mano cada articulación.</span>
+    </div>
+    <canvas id="graf" width="900" height="200"></canvas>
+    <div class="mot" style="margin-top:10px" id="mot">
+      <span class="h"></span><span class="h">Cuentas</span><span class="h">Ángulo</span><span class="h">Saltos</span><span class="h">nFAULT</span>
+    </div>
+  </section>
+
+  <section>
+    <h2>Consola</h2>
+    <div class="fila" style="margin-bottom:6px">
+      <input type="text" id="tx" placeholder="comando (h = ayuda)" style="flex:1;min-width:140px" disabled>
+      <button id="bEnviar" disabled>Enviar</button>
+      <label class="nota"><input type="checkbox" id="ocultarLog" checked> ocultar logs del sistema</label>
+      <button id="bLimpiar">Limpiar</button>
+    </div>
+    <div id="consola"></div>
+  </section>
+
+  <section class="ancho">
+    <h2>Bus con las patas (desde la maestra)</h2>
+    <div class="fila" style="margin-bottom:8px">
+      <button class="cmd prim" data-c="escanear" disabled>Escanear</button>
+      <button class="cmd" data-c="escanear 20" disabled>Escanear ×20</button>
+      <button class="cmd" data-c="escanear 100" disabled>Escanear ×100</button>
+      <span class="nota" style="margin-left:8px">Ráfaga a la pata</span>
+      <select id="selPata" disabled><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option></select>
+      <select id="selN" disabled><option>1000</option><option>5000</option><option>100</option></select>
+      <button id="bRafaga" disabled>Ráfaga</button>
+      <button id="bRafagaTodas" disabled>Ráfaga a las que respondieron</button>
+    </div>
+    <p class="nota" style="margin:0 0 8px">Con CANH y CANL conectados al bus. Solo envía IDENT y PING: ninguna pata se arma ni se mueve. Las patas deben tener el firmware <code>pata_MOD_DRV</code> con su ID.</p>
+    <table>
+      <thead><tr><th>Pata</th><th>Placa (MAC)</th><th>Escaneo</th><th>Respondió</th><th>Ráfaga</th><th>Ida y vuelta</th></tr></thead>
+      <tbody id="bus"></tbody>
+    </table>
+    <div id="busEstado" class="nota" style="margin-top:8px"></div>
+  </section>
+
+  <section class="ancho">
+    <h2>Salud del bus en vivo (todas las patas a la vez)</h2>
+    <div class="fila" style="margin-bottom:8px">
+      <span class="nota">Duración</span>
+      <select id="selSeg" disabled><option value="30">30 s</option><option value="60" selected>60 s</option><option value="300">5 min</option><option value="1800">30 min</option></select>
+      <span class="nota">Ritmo</span>
+      <select id="selHz" disabled><option value="10">10 ciclos/s</option><option value="50">50 ciclos/s</option><option value="100" selected>100 ciclos/s</option><option value="200">200 ciclos/s</option></select>
+      <button id="bSalud" class="prim" disabled>Iniciar</button>
+      <button id="bSaludParar" disabled>Detener</button>
+      <span id="saludT" class="nota"></span>
+    </div>
+    <p class="nota" style="margin:0 0 8px">La maestra pide ESTADO a cada pata presente en cada ciclo, como lo hará el control del robot. Solo lee: ninguna pata se arma ni se mueve. Mientras corre, mueve cables o enciende V_MOT y mira si aparecen pérdidas o errores.</p>
+    <table>
+      <thead><tr><th>Pata</th><th>Peticiones/s</th><th>Respuestas (último s)</th><th>Perdidas totales</th><th>Latencia prom · máx (último s)</th><th>Latencia máx total</th></tr></thead>
+      <tbody id="salud"></tbody>
+    </table>
+    <div id="saludBus" class="nota" style="margin-top:8px"></div>
+    <canvas id="grafSalud" width="1400" height="200" style="margin-top:8px"></canvas>
+  </section>
+
+  <section class="ancho">
+    <h2>Registro de placas</h2>
+    <div class="fila" style="margin-bottom:8px">
+      <span class="nota">Cada «Correr todo» se anota aquí y queda guardado en este navegador.</span>
+      <button id="bCsv">Descargar CSV</button>
+      <button id="bBorrar">Borrar registro</button>
+    </div>
+    <table>
+      <thead><tr><th>Fecha</th><th>Placa</th><th>MAC</th><th>CTX</th><th>Eco</th><th>Reposo</th><th>TWAI</th><th>Motores</th><th>Resultado</th></tr></thead>
+      <tbody id="reg"></tbody>
+    </table>
+  </section>
+</main>
+
+<script>
+"use strict";
+/* MAC (últimos 4 dígitos) -> placa, del registro de la tesis. */
+const MACS = { "FF94":"Pata 1", "ED18":"Pata 2", "E844":"Pata 3", "1E34":"Pata 4", "D630":"Pata 5", "1524":"Pata 6", "B520":"Maestra S3" };
+const PRUEBAS = [
+  { n:1, k:"ctx",     t:"Línea CTX",   q:"CTX libre con pull-up: un 0 es corto a GND" },
+  { n:2, k:"eco",     t:"Eco CTX→CRX", q:"El módulo repite CTX en CRX (1 y 0)" },
+  { n:3, k:"reposo",  t:"Reposo",      q:"Con CTX=1, CRX nunca debe bajar" },
+  { n:4, k:"twai",    t:"TWAI",        q:"200 tramas a 500 kbit/s verificadas" },
+  { n:5, k:"motores", t:"Motores",     q:"nFAULT y encoders (solo lectura)" },
+];
+const $ = id => document.getElementById(id);
+
+let port = null, writer = null, reading = false;
+const st = { seccion:0, res:{}, det:{}, enDiag:false, diagTxt:"", diagRes:"", placa:"", mac:"", id:"", esc:null };
+const mon = []; const MAXP = 90;
+
+/* ---------- interfaz ---------- */
+function pintarPruebas(){
+  const esS3 = /S3/.test(st.placa);
+  $("pruebas").innerHTML = PRUEBAS.filter(p => !(esS3 && p.n === 5)).map(p => {
+    const r = st.res[p.n] || "";
+    return `<div class="card ${r}"><div class="tit"><span>${p.n} · ${p.t}</span><span class="badge ${r}">${r || "—"}</span></div>
+      <div class="que">${p.q}</div><div class="det">${(st.det[p.n] || []).join("\n")}</div></div>`;
+  }).join("");
+}
+function pintarInfo(){
+  $("iPlaca").textContent = st.placa || "—";
+  $("iMac").textContent = st.mac || "—";
+  $("iQuien").textContent = quien() || "—";
+  $("iId").textContent = st.id || "—";
+}
+function quien(){ return st.mac ? (MACS[st.mac.slice(-4)] || "MAC no registrada") : ""; }
+function pintarDiag(){
+  const d = $("diag");
+  d.className = st.diagRes;
+  d.innerHTML = `<div class="res">${st.diagRes ? "Resultado: " + st.diagRes : ""}</div>` + esc(st.diagTxt.trim());
+}
+function esc(s){ return s.replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
+
+function consola(txt, cls){
+  if (cls === "log" && $("ocultarLog").checked) return;
+  const c = $("consola"), abajo = c.scrollTop + c.clientHeight >= c.scrollHeight - 20;
+  const div = document.createElement("div");
+  if (cls) div.className = cls;
+  div.textContent = txt;
+  c.appendChild(div);
+  while (c.childNodes.length > 1500) c.removeChild(c.firstChild);
+  if (abajo) c.scrollTop = c.scrollHeight;
+}
+
+/* ---------- interpretación de las líneas del firmware ---------- */
+const NOMBRE_A_N = { ctx:1, eco:2, reposo:3, twai:4, motores:5 };
+function linea(l){
+  l = l.replace(/\r$/, "");
+  if (/^[IWE] \(\d+\)/.test(l)) { consola(l, "log"); return; }
+  consola(l);
+
+  let m;
+  if ((m = l.match(/^INFO,placa=([^,]+),MAC=([0-9A-F]{12})/))) { st.placa = m[1]; st.mac = m[2]; pintarInfo(); pintarPruebas(); return; }
+  if ((m = l.match(/^INFO,CTX=GPIO(\d+),CRX=GPIO(\d+)/))) { $("iPines").textContent = `CTX GPIO${m[1]} · CRX GPIO${m[2]} · 500 kbit/s`; return; }
+  if ((m = l.match(/^INFO,ID de pata guardado en NVS = (\d)/))) { st.id = m[1]; pintarInfo(); return; }
+  if (/^INFO,sin ID/.test(l)) { st.id = "sin ID"; pintarInfo(); return; }
+
+  if (/^### DIAGNOSTICO DE UNA PLACA/.test(l)) {          /* empieza 'todo' */
+    st.res = {}; st.det = {}; st.diagTxt = ""; st.diagRes = ""; pintarPruebas(); pintarDiag(); return;
+  }
+  if ((m = l.match(/^\[(\d)\]/))) { st.seccion = +m[1]; st.res[st.seccion] = ""; st.det[st.seccion] = []; pintarPruebas(); return; }
+  if (/^ESCUCHA 5 s/.test(l)) { st.seccion = 0; st.esc = []; return; }
+
+  if (/^=+ DIAGNOSTICO =+/.test(l)) { st.enDiag = true; st.diagTxt = ""; st.seccion = 0; return; }
+  if (st.enDiag) {
+    if (/^=+$/.test(l)) { st.enDiag = false; pintarDiag(); registrar(); return; }
+    const res = [...l.matchAll(/\[(\d)\] (\w+) (PASA|FALLA|DUDOSA|-)/g)];
+    if (res.length) { res.forEach(r => { if (r[3] !== "-") st.res[+r[1]] = r[3]; }); pintarPruebas(); return; }
+    if ((m = l.match(/^RESULTADO,CAN,(PASA|FALLA|DUDOSA)(?:,(\w+))?/))) {
+      st.diagRes = m[1]; st.diagTxt = (m[2] ? m[2].replace(/_/g, " ") + "\n" : ""); pintarDiag(); return;
+    }
+    st.diagTxt += l.replace(/^  /, "") + "\n"; pintarDiag(); return;
+  }
+
+  if (st.esc && /^  /.test(l)) {
+    st.esc.push(l.trim());
+    $("escucha").innerHTML = `<div class="det" style="font-family:var(--mono);font-size:12px;white-space:pre-wrap">${esc(st.esc.join("\n"))}</div>`;
+    if (/^  -> /.test(l)) st.esc = null;
+    return;
+  }
+
+  if (lineaBus(l)) return;
+  if (lineaSalud(l)) return;
+  if ((m = l.match(/^MON,t=([\d.]+) s,CTX=(\d),CRX_en_0=(\d+)%(.*)$/))) { monitor(+m[1], +m[3], m[4]); return; }
+
+  if (st.seccion === 5 && (m = l.match(/^\s+(coxa|femur|tibia)\s+nFAULT=(\d).*cuentas=(-?\d+) \(([-\d.]+) rad\)\s+saltos=(\d+)/))) {
+    motor(m[1], +m[3], +m[4], +m[5], +m[2]);
+  }
+  if (!st.seccion || !/^  \S/.test(l)) return;          /* las líneas con 5 espacios continúan un texto */
+  const s = st.seccion, det = st.det[s];
+  if ((m = l.match(/^  -> (PASA|FALLA|DUDOSA)/))) st.res[s] = m[1];
+  if (s === 5) {
+    if (/nFAULT bien/.test(l)) st.res[5] = "PASA";
+    if (/nFAULT en 0/.test(l)) st.res[5] = "FALLA";
+    if (/nFAULT=/.test(l)) det.push(l.trim().replace(/\s+encoder.*/, ""));
+  } else if (!/^  -> /.test(l) || (s === 2 && !/^  -> PASA/.test(l))) {
+    det.push(l.trim().replace(/^-> /, "→ "));
+  }
+  pintarPruebas();
+}
+
+/* ---------- bus con las patas ---------- */
+const bus = {};   /* pata -> {mac, escaneo, ok, de, rafaga, rafCls, tiempo} */
+function patasBus(){ for (let n = 1; n <= 6; n++) bus[n] = bus[n] || {}; }
+function badge(t, cls){ return `<span class="badge ${cls}">${t}</span>`; }
+function pintarBus(){
+  patasBus();
+  $("bus").innerHTML = [1,2,3,4,5,6].map(n => {
+    const b = bus[n], mac = b.mac && !/^0+$/.test(b.mac) ? b.mac : "";
+    const nom = mac ? (MACS[mac.slice(-4)] || "MAC no registrada") : "";
+    const pct = b.de ? b.ok / b.de : null;
+    const resp = b.de ? badge(`${b.ok}/${b.de}`, pct === 1 ? "PASA" : pct === 0 ? "FALLA" : "DUDOSA") : "—";
+    return `<tr><td><b>${n}</b></td><td>${nom}${mac ? ` <span class="nota mono">${mac}</span>` : ""}</td>
+      <td>${b.escaneo ? badge(b.escaneo, b.escaneo === "OK" ? "PASA" : "FALLA") : "—"}</td><td>${resp}</td>
+      <td>${b.rafaga ? badge(b.rafaga, b.rafCls) : "—"}</td><td class="mono">${b.tiempo || "—"}</td></tr>`;
+  }).join("");
+}
+function lineaBus(l){
+  let m; patasBus();
+  if (/^ESCANEO del bus/.test(l)) { for (let n = 1; n <= 6; n++) { bus[n].escaneo = ""; } $("busEstado").textContent = "Escaneando…"; pintarBus(); return true; }
+  if ((m = l.match(/^SCAN,(\d),OK,([0-9A-F]{12}),us=(\d+)/))) { const b = bus[m[1]]; b.escaneo = "OK"; b.mac = m[2]; b.ok = 1; b.de = 1; b.tiempo = `${m[3]} µs`; pintarBus(); return true; }
+  if ((m = l.match(/^SCAN,(\d),NO,(\w+)/))) { const b = bus[m[1]]; b.escaneo = m[2].replace("_", " "); b.ok = 0; b.de = 1; pintarBus(); return true; }
+  if ((m = l.match(/^SCANS,(\d),ok=(\d+),de=(\d+),MAC=([0-9A-F]{12}),us_max=(\d+)/))) {
+    const b = bus[m[1]]; b.ok = +m[2]; b.de = +m[3]; if (+m[2]) { b.mac = m[4]; b.tiempo = `máx ${m[5]} µs`; }
+    b.escaneo = +m[2] ? "OK" : "NO RESPONDE"; pintarBus(); return true;
+  }
+  if ((m = l.match(/^SCAN,fin,(\d)/))) { $("busEstado").textContent = `${m[1]} patas respondieron.`; return true; }
+  if ((m = l.match(/^RAFAGA,(\d),progreso,(\d+)\/(\d+),ok=(\d+)/))) { const b = bus[m[1]]; b.rafaga = `${m[4]}/${m[2]} …`; b.rafCls = ""; pintarBus(); return true; }
+  if ((m = l.match(/^RAFAGA,(\d),fin,enviados=(\d+),ok=(\d+),sin_ack=(\d+),no_salio=(\d+),sin_resp=(\d+),us_min=(\d+),us_prom=(\d+),us_max=(\d+)/))) {
+    const b = bus[m[1]], env = +m[2], ok = +m[3];
+    b.rafaga = `${ok}/${env}`; b.rafCls = ok === env ? "PASA" : ok === 0 ? "FALLA" : "DUDOSA";
+    if (ok) b.tiempo = `${m[7]}–${m[8]}–${m[9]} µs`;
+    const fallos = [];
+    if (+m[4]) fallos.push(`${m[4]} sin ACK`); if (+m[5]) fallos.push(`${m[5]} no salieron`); if (+m[6]) fallos.push(`${m[6]} sin respuesta`);
+    $("busEstado").textContent = `Ráfaga a la pata ${m[1]}: ${ok} de ${env} bien` + (fallos.length ? ` (${fallos.join(", ")})` : "") + ". Tiempos: mínimo–promedio–máximo.";
+    pintarBus(); siguienteRafaga(); return true;
+  }
+  if ((m = l.match(/^BUS,PEGADO,(\d+)%/))) { $("busEstado").innerHTML = badge("BUS PEGADO", "FALLA") + ` CRX en 0 el ${m[1]} % del tiempo antes de transmitir: alguna placa fuerza el bus. Quita placas de una en una.`; colaRafagas = []; return true; }
+  if ((m = l.match(/^BUS,TEC=(\d+),REC=(\d+),errores=(\d+),estado=(\w+)/))) {
+    const malo = +m[3] > 0 || m[4] === "BUS_OFF";
+    $("busEstado").innerHTML += ` ${badge(malo ? "errores en el bus" : "sin errores", malo ? "DUDOSA" : "PASA")} <span class="mono">TEC ${m[1]} · REC ${m[2]} · errores ${m[3]} · ${m[4]}</span>`;
+    return true;
+  }
+  return false;
+}
+/* ---------- salud del bus en vivo ---------- */
+const COL_PATA = { 1:"#2563eb", 2:"#16a34a", 3:"#d97706", 4:"#9333ea", 5:"#0891b2", 6:"#db2777" };
+let sal = { patas:{}, hist:[], bus:null, fin:null };
+function lineaSalud(l){
+  let m;
+  if (/^SALUD del bus/.test(l)) { sal = { patas:{}, hist:[], bus:null, fin:null }; $("saludT").textContent = "corriendo…"; pintarSalud(); return true; }
+  if ((m = l.match(/^SALUD,patas,(.*)$/))) { m[1].trim().split(/\s+/).filter(Boolean).forEach(n => sal.patas[n] = { tot:0, perd:0, max:0 }); pintarSalud(); return true; }
+  if ((m = l.match(/^SALUD,aparece,(\d)/))) { sal.patas[m[1]] = { tot:0, perd:0, max:0 }; return true; }
+  if ((m = l.match(/^SALUD,t=(\d+),pata=(\d),env=(\d+),ok=(\d+),sin_resp=(\d+),sin_ack=(\d+),no_salio=(\d+),lat_prom=(\d+),lat_max=(\d+)/))) {
+    const p = sal.patas[m[2]] = sal.patas[m[2]] || { tot:0, perd:0, max:0 };
+    Object.assign(p, { t:+m[1], env:+m[3], ok:+m[4], sr:+m[5], sa:+m[6], ns:+m[7], prom:+m[8], lmax:+m[9] });
+    p.tot += +m[3]; p.perd += +m[3] - +m[4]; p.max = Math.max(p.max, +m[9]);
+    let h = sal.hist.find(x => x.t === +m[1]);
+    if (!h) { h = { t:+m[1], lat:{}, perd:0, err:0 }; sal.hist.push(h); if (sal.hist.length > 300) sal.hist.shift(); }
+    h.lat[m[2]] = +m[8]; h.perd += +m[3] - +m[4];
+    $("saludT").textContent = `t = ${m[1]} s`;
+    pintarSalud(); return true;
+  }
+  if ((m = l.match(/^SALUD,t=(\d+),bus,TEC=(\d+),REC=(\d+),errores=(\d+),bus_off=(\d+),carga=(\d+)/))) {
+    sal.bus = { tec:+m[2], rec:+m[3], err:+m[4], off:+m[5], carga:+m[6] };
+    const h = sal.hist.find(x => x.t === +m[1]); if (h) h.err = +m[4];
+    pintarSalud(); return true;
+  }
+  if ((m = l.match(/^SALUD,BUS_OFF,(\d+)/))) { consola(`BUS_OFF n.º ${m[1]}`, "tx"); return true; }
+  if ((m = l.match(/^SALUD,fin,pata=(\d),env=(\d+),ok=(\d+),perdidas=(\d+),lat_max=(\d+)/))) {
+    const p = sal.patas[m[1]] = sal.patas[m[1]] || {}; p.tot = +m[2]; p.perd = +m[4]; p.max = +m[5]; pintarSalud(); return true;
+  }
+  if ((m = l.match(/^SALUD,fin,bus,errores=(\d+),bus_off=(\d+)/))) {
+    sal.fin = { err:+m[1], off:+m[2] };
+    const perd = Object.values(sal.patas).reduce((a, p) => a + (p.perd || 0), 0);
+    const tot = Object.values(sal.patas).reduce((a, p) => a + (p.tot || 0), 0);
+    const bien = !perd && !sal.fin.err && !sal.fin.off;
+    $("saludT").innerHTML = `terminado · ${badge(bien ? "BUS SANO" : "HUBO FALLOS", bien ? "PASA" : "FALLA")} ${tot - perd}/${tot} respuestas · ${m[1]} errores · ${m[2]} BUS_OFF`;
+    return true;
+  }
+  return false;
+}
+function pintarSalud(){
+  const ns = Object.keys(sal.patas).sort();
+  $("salud").innerHTML = ns.map(n => {
+    const p = sal.patas[n], pct = p.env ? p.ok / p.env : null;
+    const fallos = [p.sr && `${p.sr} sin resp.`, p.sa && `${p.sa} sin ACK`, p.ns && `${p.ns} no salieron`].filter(Boolean).join(", ");
+    return `<tr><td><b style="color:${COL_PATA[n]}">${n}</b></td><td class="mono">${p.env ?? "—"}</td>
+      <td>${pct === null ? "—" : badge(`${p.ok}/${p.env}`, pct === 1 ? "PASA" : pct === 0 ? "FALLA" : "DUDOSA")} <span class="nota">${fallos}</span></td>
+      <td>${badge(`${p.perd || 0} de ${p.tot || 0}`, p.perd ? "FALLA" : "PASA")}</td>
+      <td class="mono">${p.env ? `${p.prom} · ${p.lmax} µs` : "—"}</td><td class="mono">${p.max ? p.max + " µs" : "—"}</td></tr>`;
+  }).join("") || `<tr><td colspan="6" class="nota">Sin datos. Pulsa Iniciar con la maestra conectada.</td></tr>`;
+  const b = sal.bus;
+  $("saludBus").innerHTML = b ? `Bus (último s): ${badge(b.err ? `${b.err} errores` : "sin errores", b.err ? "FALLA" : "PASA")}
+    <span class="mono">TEC ${b.tec} · REC ${b.rec} · BUS_OFF ${b.off} · carga ≈ ${b.carga} %</span>` : "";
+  grafSalud();
+}
+function grafSalud(){
+  const cv = $("grafSalud"), g = cv.getContext("2d"), W = cv.width, H = cv.height, pad = 40;
+  const cs = getComputedStyle(document.documentElement);
+  g.clearRect(0, 0, W, H); g.font = "12px Segoe UI";
+  const hs = sal.hist.slice(-120);
+  const max = Math.max(500, ...hs.flatMap(h => Object.values(h.lat))) * 1.15;
+  g.strokeStyle = cs.getPropertyValue("--line"); g.fillStyle = cs.getPropertyValue("--muted");
+  for (const f of [0, .5, 1]) { const y = H - pad - (H - 2 * pad) * f; g.beginPath(); g.moveTo(pad, y); g.lineTo(W - 8, y); g.stroke(); g.fillText(Math.round(max * f) + " µs", 0, y + 4); }
+  g.fillText("Latencia promedio por segundo · barras rojas = segundos con pérdidas o errores", pad, 14);
+  if (!hs.length) return;
+  const x = i => pad + (W - pad - 8) * (hs.length === 1 ? 0 : i / (hs.length - 1));
+  hs.forEach((h, i) => { if (h.perd || h.err) { g.fillStyle = cs.getPropertyValue("--bad"); g.globalAlpha = .35; g.fillRect(x(i) - 3, pad, 6, H - 2 * pad); g.globalAlpha = 1; } });
+  for (const n of Object.keys(sal.patas)) {
+    g.strokeStyle = COL_PATA[n]; g.lineWidth = 2; g.beginPath(); let on = false;
+    hs.forEach((h, i) => { const v = h.lat[n]; if (!v) return; const y = H - pad - (H - 2 * pad) * v / max; on ? g.lineTo(x(i), y) : g.moveTo(x(i), y); on = true; });
+    g.stroke(); g.lineWidth = 1;
+  }
+  let xl = W - 260; for (const n of Object.keys(sal.patas)) { g.fillStyle = COL_PATA[n]; g.fillText("pata " + n, xl, 14); xl += 45; }
+}
+$("bSalud").onclick = () => enviar(`salud ${$("selSeg").value} ${$("selHz").value}`);
+$("bSaludParar").onclick = () => enviar("x");
+
+let colaRafagas = [];
+function siguienteRafaga(){ if (colaRafagas.length) { const n = colaRafagas.shift(); setTimeout(() => enviar(`rafaga ${n} ${$("selN").value}`), 300); } }
+$("bRafaga").onclick = () => enviar(`rafaga ${$("selPata").value} ${$("selN").value}`);
+$("bRafagaTodas").onclick = () => {
+  colaRafagas = [1,2,3,4,5,6].filter(n => bus[n] && bus[n].ok > 0);
+  if (!colaRafagas.length) { alert("Primero escanea: ninguna pata ha respondido."); return; }
+  siguienteRafaga();
+};
+
+function motor(nombre, cuentas, rad, saltos, nf){
+  const id = "m_" + nombre;
+  let fila = document.getElementById(id);
+  if (!fila) {
+    fila = document.createElement("div"); fila.id = id; fila.style.display = "contents";
+    fila.innerHTML = `<span>${nombre}</span><span></span><span></span><span></span><span></span>`;
+    $("mot").appendChild(fila);
+  }
+  const c = fila.children;
+  c[1].textContent = cuentas; c[2].textContent = rad.toFixed(3) + " rad";
+  c[3].textContent = saltos; c[3].style.color = saltos > 5 ? "var(--warn)" : "";
+  c[4].innerHTML = `<span class="badge ${nf ? "PASA" : "FALLA"}">${nf ? "OK" : "FALLA"}</span>`;
+}
+
+function monitor(t, crx, resto){
+  const enc = {};
+  for (const m of resto.matchAll(/(coxa|femur|tibia)\s*=(-?\d+)\(([-\d.]+) rad,saltos (\d+),nF=(\d)\)/g)) {
+    enc[m[1]] = +m[3]; motor(m[1], +m[2], +m[3], +m[4], +m[5]);
+  }
+  mon.push({ t, crx, enc });
+  while (mon.length > MAXP) mon.shift();
+  grafica();
+}
+
+function grafica(){
+  const cv = $("graf"), g = cv.getContext("2d"), W = cv.width, H = cv.height, pad = 30;
+  const cs = getComputedStyle(document.documentElement);
+  g.clearRect(0, 0, W, H);
+  g.font = "12px Segoe UI"; g.fillStyle = cs.getPropertyValue("--muted"); g.strokeStyle = cs.getPropertyValue("--line");
+  for (const v of [0, 50, 100]) {
+    const y = H - pad - (H - 2 * pad) * v / 100;
+    g.beginPath(); g.moveTo(pad, y); g.lineTo(W - 8, y); g.stroke(); g.fillText(v + "%", 2, y + 4);
+  }
+  g.fillText("CRX en 0", pad + 4, 14);
+  if (mon.length < 2) return;
+  const x = i => pad + (W - pad - 8) * i / (MAXP - 1);
+  const linea = (val, color, min, max) => {
+    g.strokeStyle = color; g.lineWidth = 2; g.beginPath();
+    let empezo = false;
+    mon.forEach((p, i) => { const v = val(p); if (v === undefined) return;
+      const y = H - pad - (H - 2 * pad) * (v - min) / (max - min);
+      empezo ? g.lineTo(x(i), y) : g.moveTo(x(i), y); empezo = true; });
+    g.stroke(); g.lineWidth = 1;
+  };
+  linea(p => p.crx, cs.getPropertyValue("--bad"), 0, 100);
+  const cols = { coxa:"#2563eb", femur:"#16a34a", tibia:"#d97706" };
+  const todos = mon.flatMap(p => Object.values(p.enc));
+  if (todos.length) {
+    const amp = Math.max(0.5, ...todos.map(Math.abs));
+    for (const k of Object.keys(cols)) linea(p => p.enc[k], cols[k], -amp, amp);
+    let xl = pad + 90;
+    for (const [k, c] of Object.entries(cols)) { g.fillStyle = c; g.fillText(k, xl, 14); xl += 50; }
+    g.fillStyle = cs.getPropertyValue("--muted"); g.fillText(`encoders ±${amp.toFixed(2)} rad`, xl + 6, 14);
+  }
+}
+
+/* ---------- registro ---------- */
+const CLAVE = "diag_can_registro_v1";
+function leerReg(){ try { return JSON.parse(localStorage.getItem(CLAVE) || "[]"); } catch { return []; } }
+function guardarReg(r){ try { localStorage.setItem(CLAVE, JSON.stringify(r)); } catch {} }
+function registrar(){
+  if (!st.diagRes) return;
+  const r = leerReg();
+  r.unshift({ fecha:new Date().toLocaleString("es-PE"), placa:quien() || st.placa, mac:st.mac,
+    ctx:st.res[1]||"", eco:st.res[2]||"", reposo:st.res[3]||"", twai:st.res[4]||"", motores:st.res[5]||"",
+    resultado:st.diagRes, detalle:st.diagTxt.split("\n")[0] });
+  guardarReg(r.slice(0, 200)); pintarReg();
+}
+function pintarReg(){
+  $("reg").innerHTML = leerReg().map(r => `<tr><td>${r.fecha}</td><td>${esc(r.placa)}</td><td class="mono">${r.mac}</td>
+    ${["ctx","eco","reposo","twai","motores"].map(k => `<td><span class="badge ${r[k]}">${r[k] || "—"}</span></td>`).join("")}
+    <td><span class="badge ${r.resultado}">${r.resultado}</span> ${esc(r.detalle || "")}</td></tr>`).join("")
+    || `<tr><td colspan="9" class="nota">Sin pruebas registradas.</td></tr>`;
+}
+$("bCsv").onclick = () => {
+  const r = leerReg(), cab = ["fecha","placa","mac","ctx","eco","reposo","twai","motores","resultado","detalle"];
+  const csv = [cab.join(",")].concat(r.map(x => cab.map(k => `"${String(x[k] ?? "").replace(/"/g, '""')}"`).join(","))).join("\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob(["﻿" + csv], { type:"text/csv" }));
+  a.download = "diagnostico_can_placas.csv"; a.click();
+};
+$("bBorrar").onclick = () => { if (confirm("¿Borrar todo el registro de placas?")) { guardarReg([]); pintarReg(); } };
+
+/* ---------- puerto serie ---------- */
+function habilitar(on){
+  document.querySelectorAll(".cmd,#bMon,#bReiniciar,#tx,#bEnviar,#selPata,#selN,#bRafaga,#bRafagaTodas,#selSeg,#selHz,#bSalud,#bSaludParar").forEach(b => b.disabled = !on);
+  $("bConectar").textContent = on ? "Desconectar" : "Conectar";
+  $("estado").textContent = on ? "Conectado" : "Desconectado";
+  $("estado").style.color = on ? "var(--ok)" : "";
+}
+async function enviar(c){
+  if (!writer) return;
+  consola("> " + c, "tx");
+  await writer.write(new TextEncoder().encode(c + "\n"));
+}
+let monOn = false;
+$("bMon").onclick = async () => { monOn = !monOn; await enviar("m"); $("bMon").textContent = monOn ? "Detener monitor" : "Iniciar monitor"; };
+document.querySelectorAll(".cmd").forEach(b => b.onclick = () => enviar(b.dataset.c));
+$("bEnviar").onclick = () => { const v = $("tx").value.trim(); if (v) { enviar(v); $("tx").value = ""; } };
+$("tx").onkeydown = e => { if (e.key === "Enter") $("bEnviar").click(); };
+$("bLimpiar").onclick = () => { $("consola").innerHTML = ""; };
+
+$("bReiniciar").onclick = async () => {
+  /* EN se baja con RTS; con DTR en falso IO0 queda en 1: arranca normal (no en modo de carga). */
+  await port.setSignals({ dataTerminalReady:false, requestToSend:true });
+  await new Promise(r => setTimeout(r, 120));
+  await port.setSignals({ dataTerminalReady:false, requestToSend:false });
+  monOn = false; $("bMon").textContent = "Iniciar monitor";
+  consola("(placa reiniciada: la prueba completa corre sola al arrancar)", "tx");
+};
+
+$("bConectar").onclick = async () => {
+  if (port) { await desconectar(); return; }
+  if (!("serial" in navigator)) { alert("Este navegador no tiene Web Serial. Usa Chrome o Edge."); return; }
+  try {
+    port = await navigator.serial.requestPort();
+    await port.open({ baudRate:115200, bufferSize:65536 });
+    await port.setSignals({ dataTerminalReady:false, requestToSend:false });
+  } catch (e) {
+    port = null;
+    alert("No se pudo abrir el puerto: " + e.message + "\n\nSi dice que está en uso, cierra el monitor de VS Code u otra página.");
+    return;
+  }
+  writer = port.writable.getWriter();
+  habilitar(true);
+  leer();
+  setTimeout(() => enviar("i"), 300);
+};
+
+async function leer(){
+  reading = true;
+  let resto = "";
+  const dec = new TextDecoder();
+  while (port && port.readable && reading) {
+    const r = port.readable.getReader();
+    try {
+      for (;;) {
+        const { value, done } = await r.read();
+        if (done) break;
+        resto += dec.decode(value, { stream:true });
+        const partes = resto.split("\n"); resto = partes.pop();
+        partes.forEach(linea);
+      }
+    } catch (e) { consola("(error de lectura: " + e.message + ")", "tx"); break; }
+    finally { r.releaseLock(); }
+  }
+}
+async function desconectar(){
+  reading = false;
+  try { writer && writer.releaseLock(); } catch {}
+  try { await port.readable.cancel(); } catch {}
+  try { await port.close(); } catch {}
+  port = null; writer = null; monOn = false; $("bMon").textContent = "Iniciar monitor";
+  habilitar(false);
+}
+navigator.serial && navigator.serial.addEventListener("disconnect", e => { if (e.target === port) desconectar(); });
+
+/* Para probar sin placa: window.__lineas(["...", "..."]) */
+window.__lineas = ls => ls.forEach(linea);
+
+pintarPruebas(); pintarReg(); pintarBus(); pintarSalud(); grafica();
+</script>
+</body>
+</html>

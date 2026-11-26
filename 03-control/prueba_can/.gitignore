@@ -1,4 +1,6 @@
 **/build/
 **/build_cli/
+**/build_esp32/
+**/build_s3/
 **/sdkconfig
 **/sdkconfig.old
