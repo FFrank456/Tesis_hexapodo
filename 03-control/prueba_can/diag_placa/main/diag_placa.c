@@ -31,6 +31,9 @@
 #include "driver/gpio.h"
 #include "driver/twai.h"
 #include "esp_chip_info.h"
+#include "esp_cpu.h"
+#include "esp_rom_sys.h"
+#include "esp_log.h"
 #include "esp_mac.h"
 #include "esp_rom_sys.h"
 #include "esp_timer.h"
@@ -81,10 +84,27 @@ static struct {
     bool ctx_no_sube, ctx_no_baja;   /* CTX no sigue al GPIO (corto) */
     int alto_crx0, bajo_crx1, n_eco; /* fallos del eco: con CTX=1 CRX=0 / con CTX=0 CRX=1 */
     int reposo_pct;
+    int twai_ok;                     /* tramas correctas de la prueba 4 */
+    uint32_t twai_err;               /* errores de bus de la prueba 4 */
 } R;
+
+/* En la prueba de aguante las pruebas 1-4 se repiten sin imprimir sus detalles. */
+static bool s_mudo;
+#define DPF(...) do { if (!s_mudo) printf(__VA_ARGS__); } while (0)
+#define DPS(s)   do { if (!s_mudo) puts(s); } while (0)
 
 static bool s_monitor;
 
+/* Lee un caracter de la consola sin esperar. Con la consola USB nativa se lee del driver
+ * directamente: por stdin, a veces dejaba de llegar lo que escribia el PC. */
+static bool leer_tecla(char *c)
+{
+#if CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG
+    return usb_serial_jtag_read_bytes(c, 1, 0) == 1;
+#else
+    return read(STDIN_FILENO, c, 1) == 1;
+#endif
+}
 /* ---------------------------------------------------------------- motores */
 #if HAY_MOTORES
 static const char *const k_art[3] = {"coxa ", "femur", "tibia"};
@@ -188,23 +208,23 @@ static int contar_unos(gpio_num_t p, int n, int paso_us)
 /* [1] CTX solo con el pull-up interno (~45 k): cualquier cosa que lo tire a 0 es un corto. */
 static void prueba_ctx(void)
 {
-    puts("\n[1] LINEA CTX LIBRE (" TXT_CTX ", solo pull-up interno)");
+    DPS("\n[1] LINEA CTX LIBRE (" TXT_CTX ", solo pull-up interno)");
     gpio_reset_pin(PIN_CTX);
     gpio_set_direction(PIN_CTX, GPIO_MODE_INPUT);
     gpio_set_pull_mode(PIN_CTX, GPIO_PULLUP_ONLY);
     esp_rom_delay_us(2000);
     int unos = contar_unos(PIN_CTX, 100, 10);
-    printf("  CTX leido en 1: %d de 100\n", unos);
+    DPF("  CTX leido en 1: %d de 100\n", unos);
     if (unos == 100) {
-        puts("  -> PASA: nada tira de CTX hacia 0 V.");
+        DPS("  -> PASA: nada tira de CTX hacia 0 V.");
         R.ctx = PASA;
     } else if (unos == 0) {
-        puts("  -> FALLA: CTX esta en 0 V aun sin manejarlo. Hay un corto a GND en la linea\n"
+        DPS("  -> FALLA: CTX esta en 0 V aun sin manejarlo. Hay un corto a GND en la linea\n"
              "     CTX (puente de estano en J4-3 o cerca del ESP32) o el modulo la fuerza.\n"
              "     Con la placa APAGADA mide continuidad entre J4-3 y GND.");
         R.ctx = FALLA;
     } else {
-        puts("  -> DUDOSA: CTX cambia solo. Contacto flojo o ruido en J4-3.");
+        DPS("  -> DUDOSA: CTX cambia solo. Contacto flojo o ruido en J4-3.");
         R.ctx = DUDA;
     }
     pines_gpio();
@@ -213,7 +233,7 @@ static void prueba_ctx(void)
 /* [2] El transceptor repite en CRX lo que se pone en CTX (eco local). */
 static void prueba_eco(void)
 {
-    puts("\n[2] ECO CTX -> CRX por GPIO (sin el controlador CAN)");
+    DPS("\n[2] ECO CTX -> CRX por GPIO (sin el controlador CAN)");
     pines_gpio();
     const int n = 50;
     int ctx_alto_mal = 0, ctx_bajo_mal = 0, alto_crx0 = 0, bajo_crx1 = 0;
@@ -232,9 +252,9 @@ static void prueba_eco(void)
         gpio_set_level(PIN_CTX, 1);
     }
     esp_rom_delay_us(200);
-    printf("  CTX=1: CTX releido mal %d/%d, CRX en 0 %d/%d   (debe ser 0 y 0)\n",
+    DPF("  CTX=1: CTX releido mal %d/%d, CRX en 0 %d/%d   (debe ser 0 y 0)\n",
            ctx_alto_mal, n, alto_crx0, n);
-    printf("  CTX=0: CTX releido mal %d/%d, CRX en 1 %d/%d   (debe ser 0 y 0)\n",
+    DPF("  CTX=0: CTX releido mal %d/%d, CRX en 1 %d/%d   (debe ser 0 y 0)\n",
            ctx_bajo_mal, n, bajo_crx1, n);
 
     R.ctx_no_sube = ctx_alto_mal > n / 2;
@@ -242,19 +262,19 @@ static void prueba_eco(void)
     R.alto_crx0 = alto_crx0;
     R.bajo_crx1 = bajo_crx1;
     R.n_eco = n;
-    if (R.ctx_no_sube) puts("  -> CTX no sube a 1 aunque el ESP32 lo pone en 1: corto de CTX a GND.");
-    if (R.ctx_no_baja) puts("  -> CTX no baja a 0 aunque el ESP32 lo pone en 0: corto de CTX a 3V3.");
+    if (R.ctx_no_sube) DPS("  -> CTX no sube a 1 aunque el ESP32 lo pone en 1: corto de CTX a GND.");
+    if (R.ctx_no_baja) DPS("  -> CTX no baja a 0 aunque el ESP32 lo pone en 0: corto de CTX a 3V3.");
     if (alto_crx0 == n)
-        puts("  -> Con CTX=1 el modulo entrega CRX=0 (dominante) siempre: ver diagnostico.");
+        DPS("  -> Con CTX=1 el modulo entrega CRX=0 (dominante) siempre: ver diagnostico.");
     else if (alto_crx0)
-        puts("  -> Con CTX=1, CRX baja a veces: contacto flojo, ruido u otro nodo transmitiendo.");
+        DPS("  -> Con CTX=1, CRX baja a veces: contacto flojo, ruido u otro nodo transmitiendo.");
     if (bajo_crx1 == n)
-        puts("  -> Con CTX=0 el modulo NO pone el bus en dominante: ver diagnostico.");
+        DPS("  -> Con CTX=0 el modulo NO pone el bus en dominante: ver diagnostico.");
     else if (bajo_crx1)
-        puts("  -> Con CTX=0, CRX no siempre baja: contacto flojo en CTX/CRX o en la alimentacion.");
+        DPS("  -> Con CTX=0, CRX no siempre baja: contacto flojo en CTX/CRX o en la alimentacion.");
 
     if (!ctx_alto_mal && !ctx_bajo_mal && !alto_crx0 && !bajo_crx1) {
-        puts("  -> PASA: el modulo sigue a CTX en los dos niveles.");
+        DPS("  -> PASA: el modulo sigue a CTX en los dos niveles.");
         R.eco = PASA;
     } else {
         R.eco = (alto_crx0 == n || bajo_crx1 == n || R.ctx_no_sube || R.ctx_no_baja) ? FALLA : DUDA;
@@ -264,22 +284,22 @@ static void prueba_eco(void)
 /* [3] Bus en reposo: con CTX=1 y nadie mas transmitiendo, CRX no debe bajar. */
 static void prueba_reposo(void)
 {
-    puts("\n[3] REPOSO: CTX=1 durante 100 ms, CRX no debe bajar");
+    DPS("\n[3] REPOSO: CTX=1 durante 100 ms, CRX no debe bajar");
     pines_gpio();
     esp_rom_delay_us(500);
     const int n = 2000;
     int ceros = n - contar_unos(PIN_CRX, n, 50);
     R.reposo_pct = ceros * 100 / n;
-    printf("  CRX en 0: %d de %d muestras (%d %%)\n", ceros, n, R.reposo_pct);
+    DPF("  CRX en 0: %d de %d muestras (%d %%)\n", ceros, n, R.reposo_pct);
     if (ceros == 0) {
-        puts("  -> PASA: reposo limpio.");
+        DPS("  -> PASA: reposo limpio.");
         R.reposo = PASA;
     } else if (ceros == n) {
-        puts("  -> FALLA: CRX pegado en 0. Si la placa esta desconectada del bus, el problema\n"
+        DPS("  -> FALLA: CRX pegado en 0. Si la placa esta desconectada del bus, el problema\n"
              "     es de esta placa (ver diagnostico). Si esta conectada, puede ser otra.");
         R.reposo = FALLA;
     } else {
-        puts("  -> DUDOSA: CRX baja a ratos. Desconectada del bus: ruido o contacto flojo.\n"
+        DPS("  -> DUDOSA: CRX baja a ratos. Desconectada del bus: ruido o contacto flojo.\n"
              "     Conectada: otra placa esta transmitiendo (normal si hay trafico).");
         R.reposo = DUDA;
     }
@@ -289,7 +309,7 @@ static void prueba_reposo(void)
  * con autorrecepcion el controlador la lee de vuelta por CRX (pasa por el modulo). */
 static void prueba_twai(void)
 {
-    puts("\n[4] CONTROLADOR TWAI: 200 tramas a 500 kbit/s con autorrecepcion (NO_ACK)");
+    DPS("\n[4] CONTROLADOR TWAI: 200 tramas a 500 kbit/s con autorrecepcion (NO_ACK)");
     twai_general_config_t g = TWAI_GENERAL_CONFIG_DEFAULT(PIN_CTX, PIN_CRX, TWAI_MODE_NO_ACK);
     g.tx_queue_len = 4;
     g.rx_queue_len = 8;
@@ -298,7 +318,7 @@ static void prueba_twai(void)
     twai_filter_config_t f = TWAI_FILTER_CONFIG_ACCEPT_ALL();
     esp_err_t e = twai_driver_install(&g, &t, &f);
     if (e != ESP_OK) {
-        printf("  -> FALLA: no se pudo instalar el driver TWAI (%s)\n", esp_err_to_name(e));
+        DPF("  -> FALLA: no se pudo instalar el driver TWAI (%s)\n", esp_err_to_name(e));
         R.twai = FALLA;
         pines_gpio();
         return;
@@ -334,23 +354,25 @@ static void prueba_twai(void)
     int64_t dt = esp_timer_get_time() - t0;
     twai_status_info_t st = {0};
     twai_get_status_info(&st);
-    printf("  correctas %d/%d   no salieron %d   no volvieron %d   distintas %d\n",
+    DPF("  correctas %d/%d   no salieron %d   no volvieron %d   distintas %d\n",
            ok, n, no_sale, no_vuelve, distinta);
-    printf("  TEC=%" PRIu32 " REC=%" PRIu32 " errores de bus=%" PRIu32 "%s   tiempo %.1f ms\n",
+    DPF("  TEC=%" PRIu32 " REC=%" PRIu32 " errores de bus=%" PRIu32 "%s   tiempo %.1f ms\n",
            st.tx_error_counter, st.rx_error_counter, st.bus_error_count,
            bus_off ? "  BUS_OFF" : "", dt / 1000.0);
     if (st.state == TWAI_STATE_RUNNING) twai_stop();
     twai_driver_uninstall();
     pines_gpio();
+    R.twai_ok = ok;
+    R.twai_err = st.bus_error_count;
 
     if (ok == n && st.bus_error_count == 0) {
-        puts("  -> PASA: el controlador, el modulo y el eco funcionan a 500 kbit/s.");
+        DPS("  -> PASA: el controlador, el modulo y el eco funcionan a 500 kbit/s.");
         R.twai = PASA;
     } else if (ok == 0) {
-        puts("  -> FALLA: ninguna trama volvio bien. El controlador ve errores de bit en CRX.");
+        DPS("  -> FALLA: ninguna trama volvio bien. El controlador ve errores de bit en CRX.");
         R.twai = FALLA;
     } else {
-        puts("  -> DUDOSA: algunas tramas fallan. Contacto flojo, ruido o placa conectada a un\n"
+        DPS("  -> DUDOSA: algunas tramas fallan. Contacto flojo, ruido o placa conectada a un\n"
              "     bus con trafico (repite desconectada).");
         R.twai = DUDA;
     }
@@ -678,7 +700,7 @@ static bool hay_tecla(void)
 {
     char c;
     bool h = false;
-    while (read(STDIN_FILENO, &c, 1) == 1) h = true;
+    while (leer_tecla(&c)) h = true;
     return h;
 }
 
@@ -807,6 +829,106 @@ salir:
     if (s_instalado_bus()) bus_parar();
 }
 
+/* Aguante de la placa: repite las pruebas 1-4 'n' veces sin imprimir sus detalles y resume.
+ * Una placa robusta pasa todas las rondas. Va con CANH y CANL desconectados. Una tecla corta. */
+static void aguante(int n)
+{
+    if (n < 1) n = 1;
+    if (n > 1000) n = 1000;
+    printf("\nAGUANTE de la placa: %d rondas de las pruebas 1-4 (CANH y CANL desconectados). "
+           "Cualquier tecla detiene.\n", n);
+    static const char *const nom[4] = {"ctx", "eco", "reposo", "twai"};
+    int pasa[4] = {0}, duda[4] = {0}, falla[4] = {0};
+    int rondas = 0, malas = 0, primera_mala = 0, peor_reposo = 0;
+    long tw_ok = 0;
+    uint32_t tw_err = 0;
+    int64_t t0 = esp_timer_get_time();
+    for (int i = 0; i < n; i++) {
+        if (hay_tecla()) break;
+        memset(&R, 0, sizeof R);
+        s_mudo = true;
+        prueba_ctx();
+        prueba_eco();
+        prueba_reposo();
+        prueba_twai();
+        s_mudo = false;
+        rondas++;
+        res_t r[4] = {R.ctx, R.eco, R.reposo, R.twai};
+        bool mala = false;
+        for (int k = 0; k < 4; k++) {
+            if (r[k] == PASA) pasa[k]++;
+            else { mala = true; if (r[k] == FALLA) falla[k]++; else duda[k]++; }
+        }
+        if (mala) { malas++; if (!primera_mala) primera_mala = i + 1; }
+        if (R.reposo_pct > peor_reposo) peor_reposo = R.reposo_pct;
+        tw_ok += R.twai_ok;
+        tw_err += R.twai_err;
+        if ((i + 1) % 10 == 0 || i + 1 == n)
+            printf("AGUANTE,progreso,%d/%d,malas=%d\n", i + 1, n, malas);
+        vTaskDelay(ESPERA(5));
+    }
+    for (int k = 0; k < 4; k++)
+        printf("AGUANTE,%s,pasa=%d,dudosa=%d,falla=%d\n", nom[k], pasa[k], duda[k], falla[k]);
+    printf("AGUANTE,twai,tramas_ok=%ld,de=%d,errores_bus=%" PRIu32 "\n", tw_ok, rondas * 200, tw_err);
+    printf("AGUANTE,fin,rondas=%d,malas=%d,primera_mala=%d,peor_reposo=%d,tiempo_s=%.1f\n", rondas, malas,
+           primera_mala, peor_reposo, (esp_timer_get_time() - t0) / 1e6);
+    if (!rondas) puts("RESULTADO,AGUANTE,CORTADA");
+    else if (!malas) puts("RESULTADO,AGUANTE,PASA");
+    else puts("RESULTADO,AGUANTE,FALLA");
+    if (malas)
+        puts("  Alguna ronda fallo: hay un contacto intermitente, ruido o alimentacion inestable.\n"
+             "  Repite moviendo un cable cada vez para encontrar cual es.");
+}
+
+/* Retardo del lazo CTX -> modulo -> CRX, en ns. A 500 kbit/s el bit dura 2000 ns y se
+ * muestrea al 80 %: si el eco tarda mas de ~1000 ns, el controlador ve errores de bit en sus
+ * propias tramas. Pulsos dominantes de menos de 20 us. */
+static void medir_retardo(void)
+{
+    puts("\nRETARDO del lazo CTX -> modulo -> CRX (20 pulsos)");
+    pines_gpio();
+    const uint32_t tpu = esp_rom_get_cpu_ticks_per_us();
+    const uint32_t lim = 20 * tpu;
+    uint32_t bmin = UINT32_MAX, bmax = 0, bsum = 0, smin = UINT32_MAX, smax = 0, ssum = 0;
+    int ok = 0, sin_bajar = 0, sin_subir = 0;
+    for (int i = 0; i < 20; i++) {
+        gpio_set_level(PIN_CTX, 1);
+        esp_rom_delay_us(100);
+        portDISABLE_INTERRUPTS();
+        uint32_t t0 = esp_cpu_get_cycle_count(), d;
+        gpio_set_level(PIN_CTX, 0);
+        while (gpio_get_level(PIN_CRX) && (esp_cpu_get_cycle_count() - t0) < lim) {}
+        uint32_t baja = esp_cpu_get_cycle_count() - t0;
+        esp_rom_delay_us(10);
+        t0 = esp_cpu_get_cycle_count();
+        gpio_set_level(PIN_CTX, 1);
+        while (!gpio_get_level(PIN_CRX) && (esp_cpu_get_cycle_count() - t0) < lim) {}
+        uint32_t sube = esp_cpu_get_cycle_count() - t0;
+        portENABLE_INTERRUPTS();
+        if (baja >= lim) { sin_bajar++; continue; }
+        if (sube >= lim) { sin_subir++; continue; }
+        d = baja * 1000 / tpu; bsum += d; if (d < bmin) bmin = d; if (d > bmax) bmax = d;
+        d = sube * 1000 / tpu; ssum += d; if (d < smin) smin = d; if (d > smax) smax = d;
+        ok++;
+    }
+    gpio_set_level(PIN_CTX, 1);
+    if (!ok) {
+        printf("RETARDO,sin_medida,sin_bajar=%d,sin_subir=%d\n", sin_bajar, sin_subir);
+        puts("  CRX no siguio a CTX en 20 us: el modulo no transmite o CRX no llega.");
+        return;
+    }
+    printf("RETARDO,bajada_ns=%" PRIu32 "/%" PRIu32 "/%" PRIu32 ",subida_ns=%" PRIu32 "/%" PRIu32 "/%" PRIu32
+           ",medidas=%d   (min/prom/max)\n", bmin, bsum / ok, bmax, smin, ssum / ok, smax, ok);
+    /* La medida por GPIO suma ~550 ns propios (leer y escribir el pin), y algun pulso suelto sale
+     * largo por la cache: se juzga por el promedio. */
+    uint32_t peor = bsum / ok > ssum / ok ? bsum / ok : ssum / ok;
+    puts("  (la medida incluye ~550 ns del propio ESP32; se juzga el promedio)");
+    if (peor < 900)       puts("  -> PASA: lazo rapido, sobra margen a 500 kbit/s.");
+    else if (peor < 1300) puts("  -> DUDOSA: funciona justo a 500 kbit/s; con cable largo puede fallar.");
+    else                  puts("  -> FALLA: lazo demasiado lento para 500 kbit/s (bit de 2000 ns, muestreo a 1600 ns).\n"
+                               "     Revisa el modo lento del transceptor (pin Rs) y el reductor de nivel en CRX.");
+}
+
 /* ---------------------------------------------------------------- info y consola */
 
 static void info(void)
@@ -830,11 +952,34 @@ static void info(void)
     else    puts("INFO,sin ID de pata en NVS (normal en la maestra)");
 }
 
+/* Deja CTX fijo (1, 0 o libre con pull-up) para medir el transceptor con el multimetro.
+   Se queda asi hasta la siguiente orden; cualquier prueba vuelve a configurar los pines. */
+static void fijar_ctx(int modo)
+{
+    pines_gpio();
+    if (modo < 0) {
+        gpio_set_direction(PIN_CTX, GPIO_MODE_INPUT);
+        gpio_set_pull_mode(PIN_CTX, GPIO_PULLUP_ONLY);
+    } else {
+        gpio_set_level(PIN_CTX, modo);
+    }
+    esp_rom_delay_us(100);
+    int ctx = contar_unos(PIN_CTX, 1000, 20);
+    int crx = contar_unos(PIN_CRX, 1000, 20);
+    printf("CTXFIJO,modo=%s,CTX_en_1=%d/1000,CRX_en_1=%d/1000\n",
+           modo < 0 ? "libre" : (modo ? "1" : "0"), ctx, crx);
+    if (modo == 0) puts("  CTX en 0: el modulo transmite dominante. Solo con CANH y CANL DESCONECTADOS del bus.");
+    puts("  Se queda asi hasta la siguiente orden. Mide ahora con el multimetro.");
+}
+
 static void ayuda(void)
 {
     puts("\nCOMANDOS (escribe y pulsa Enter):");
     puts("  todo     las pruebas 1-4 (y 5 en la MOD_DRV) con diagnostico final");
     puts("  ctx | eco | reposo | twai   una prueba suelta");
+    puts("  aguante 100  repite las pruebas 1-4 cien veces y resume (robustez de la placa)");
+    puts("  retardo  tiempo del lazo CTX -> modulo -> CRX en ns (debe ser < 500 ns)");
+    puts("  ctx1 | ctx0 | ctxlibre   deja CTX fijo para medir el transceptor con multimetro");
 #if HAY_MOTORES
     puts("  motores  nFAULT y encoders (no mueve nada)");
     puts("  cero     encoders a 0");
@@ -860,8 +1005,14 @@ static void procesar(const char *l)
     else if (sscanf(l, "salud %d %d", &a, &b) == 2) salud(a, b);
     else if (sscanf(l, "salud %d", &a) == 1)   salud(a, 100);
     else if (!strcmp(l, "salud"))              salud(60, 100);
+    else if (sscanf(l, "aguante %d", &a) == 1) aguante(a);
+    else if (!strcmp(l, "aguante"))            aguante(100);
+    else if (!strcmp(l, "retardo"))            medir_retardo();
     else if (!strcmp(l, "todo") || !strcmp(l, "t")) todo();
     else if (!strcmp(l, "ctx"))     { prueba_ctx(); }
+    else if (!strcmp(l, "ctx1"))    fijar_ctx(1);
+    else if (!strcmp(l, "ctx0"))    fijar_ctx(0);
+    else if (!strcmp(l, "ctxlibre")) fijar_ctx(-1);
     else if (!strcmp(l, "eco"))     { prueba_eco(); }
     else if (!strcmp(l, "reposo"))  { prueba_reposo(); }
     else if (!strcmp(l, "twai"))    { prueba_twai(); }
@@ -892,6 +1043,7 @@ void app_main(void)
     int fl = fcntl(STDIN_FILENO, F_GETFL, 0);
     if (fl >= 0) fcntl(STDIN_FILENO, F_SETFL, fl | O_NONBLOCK);
 
+    esp_log_level_set("gpio", ESP_LOG_WARN);   /* sin la linea de cada gpio_reset_pin */
     pines_gpio();
     if (nvs_flash_init() != ESP_OK) puts("AVISO,NVS no disponible (no se toca)");
 
@@ -906,7 +1058,7 @@ void app_main(void)
     int64_t ultimo_mon = 0;
     for (;;) {
         char c;
-        while (read(STDIN_FILENO, &c, 1) == 1) {
+        while (leer_tecla(&c)) {
             if (c == '\r' || c == '\n') {
                 if (n) { linea[n] = '\0'; procesar(linea); }
                 n = 0;

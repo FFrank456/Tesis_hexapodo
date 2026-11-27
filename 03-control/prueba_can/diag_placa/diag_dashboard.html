@@ -161,6 +161,42 @@ input[type=text]{font:inherit;padding:5px 8px;border:1px solid var(--line);borde
   </section>
 
   <section class="ancho">
+    <h2>Prueba de robustez</h2>
+    <div class="pruebas" style="grid-template-columns:repeat(auto-fill,minmax(320px,1fr))">
+      <div class="card" id="robP1">
+        <div class="tit"><span>Paso 1 · Aguante de la placa</span><span class="badge" id="robP1b">—</span></div>
+        <div class="que">Repite las pruebas 1 a 4 muchas veces. <b>CANH y CANL desconectados.</b> Mueve sus cables con suavidad mientras corre.</div>
+        <div class="fila" style="margin:8px 0">
+          <select id="selRondas" disabled><option value="50">50 rondas (~1 min)</option><option value="100" selected>100 rondas (~2 min)</option><option value="500">500 rondas (~10 min)</option></select>
+          <button id="bAguante" class="prim" disabled>Iniciar paso 1</button>
+          <button class="cmd" data-c="x" disabled>Detener</button>
+        </div>
+        <div class="det" id="robP1d"></div>
+      </div>
+      <div class="card" id="robP2">
+        <div class="tit"><span>Paso 2 · Aguante del bus</span><span class="badge" id="robP2b">—</span></div>
+        <div class="que">Salud del bus con todas las patas. <b>CANH y CANL conectados.</b> Prueba con V_MOT apagado y luego encendido, y moviendo cables.</div>
+        <div class="fila" style="margin:8px 0">
+          <select id="selMin" disabled><option value="120">2 min</option><option value="600" selected>10 min</option><option value="1800">30 min</option></select>
+          <select id="selCond" disabled><option>V_MOT apagado</option><option>V_MOT encendido</option><option>Moviendo cables</option><option>Encendiendo y apagando patas</option></select>
+          <button id="bAguanteBus" class="prim" disabled>Iniciar paso 2</button>
+        </div>
+        <div class="det" id="robP2d"></div>
+      </div>
+    </div>
+    <h2 style="margin-top:12px">Informe</h2>
+    <table>
+      <thead><tr><th>Fecha</th><th>Paso</th><th>Condición</th><th>Resultado</th><th>Detalle</th><th>Criterio</th></tr></thead>
+      <tbody id="robInf"></tbody>
+    </table>
+    <div class="fila" style="margin-top:8px">
+      <span id="robVeredicto" class="nota"></span>
+      <button id="bRobCsv">Descargar informe CSV</button>
+      <button id="bRobBorrar">Borrar informe</button>
+    </div>
+  </section>
+
+  <section class="ancho">
     <h2>Registro de placas</h2>
     <div class="fila" style="margin-bottom:8px">
       <span class="nota">Cada «Correr todo» se anota aquí y queda guardado en este navegador.</span>
@@ -263,7 +299,8 @@ function linea(l){
   }
 
   if (lineaBus(l)) return;
-  if (lineaSalud(l)) return;
+  if (lineaAguante(l)) return;
+  if (lineaSalud(l)) { if (/^SALUD,fin,bus/.test(l)) finPaso2(); return; }
   if ((m = l.match(/^MON,t=([\d.]+) s,CTX=(\d),CRX_en_0=(\d+)%(.*)$/))) { monitor(+m[1], +m[3], m[4]); return; }
 
   if (st.seccion === 5 && (m = l.match(/^\s+(coxa|femur|tibia)\s+nFAULT=(\d).*cuentas=(-?\d+) \(([-\d.]+) rad\)\s+saltos=(\d+)/))) {
@@ -400,6 +437,70 @@ function grafSalud(){
 $("bSalud").onclick = () => enviar(`salud ${$("selSeg").value} ${$("selHz").value}`);
 $("bSaludParar").onclick = () => enviar("x");
 
+/* ---------- prueba de robustez ---------- */
+const CLAVE_ROB = "diag_can_robustez_v1";
+let ag = null, paso2 = null;
+function leerRob(){ try { return JSON.parse(localStorage.getItem(CLAVE_ROB) || "[]"); } catch { return []; } }
+function guardarRob(r){ try { localStorage.setItem(CLAVE_ROB, JSON.stringify(r)); } catch {} }
+function anotarRob(fila){ const r = leerRob(); r.unshift({ fecha:new Date().toLocaleString("es-PE"), placa:quien() || st.placa, mac:st.mac, ...fila }); guardarRob(r.slice(0, 200)); pintarRob(); }
+function pintarRob(){
+  const r = leerRob();
+  $("robInf").innerHTML = r.map(x => `<tr><td>${x.fecha}</td><td>${x.paso}</td><td>${esc(x.cond || "")}</td>
+    <td>${badge(x.res, x.res === "PASA" ? "PASA" : x.res === "FALLA" ? "FALLA" : "DUDOSA")}</td><td>${esc(x.det)}</td><td class="nota">${esc(x.crit)}</td></tr>`).join("")
+    || `<tr><td colspan="6" class="nota">Sin pruebas. Haz el paso 1 y después el paso 2 en cada condición.</td></tr>`;
+  const p1 = r.find(x => x.paso === "1 · placa"), p2 = r.filter(x => x.paso === "2 · bus");
+  const conds = [...new Set(p2.map(x => x.cond))];
+  if (!p1 && !p2.length) { $("robVeredicto").textContent = ""; return; }
+  const mal = (p1 && p1.res !== "PASA") || p2.some(x => x.res !== "PASA");
+  $("robVeredicto").innerHTML = mal ? badge("NO ROBUSTO", "FALLA") + " alguna prueba falló: revisa el detalle."
+    : badge("ROBUSTO", "PASA") + ` en lo probado (${p1 ? "placa" : "falta el paso 1"}; bus en: ${conds.join(", ") || "falta el paso 2"}).`;
+}
+function lineaAguante(l){
+  let m;
+  if (/^AGUANTE de la placa/.test(l)) { ag = { tests:{} }; st.seccion = 0; $("robP1b").className = "badge"; $("robP1b").textContent = "corriendo"; $("robP1d").textContent = ""; return true; }
+  if (!ag) return false;
+  if ((m = l.match(/^AGUANTE,progreso,(\d+)\/(\d+),malas=(\d+)/))) { $("robP1d").textContent = `Ronda ${m[1]} de ${m[2]} · rondas con fallos: ${m[3]}`; return true; }
+  if ((m = l.match(/^AGUANTE,(ctx|eco|reposo),pasa=(\d+),dudosa=(\d+),falla=(\d+)/))) { ag.tests[m[1]] = [+m[2], +m[3], +m[4]]; return true; }
+  if ((m = l.match(/^AGUANTE,twai,pasa=(\d+),dudosa=(\d+),falla=(\d+)/))) { ag.tests.twai = [+m[1], +m[2], +m[3]]; return true; }
+  if ((m = l.match(/^AGUANTE,twai,tramas_ok=(\d+),de=(\d+),errores_bus=(\d+)/))) { ag.tramas = [+m[1], +m[2], +m[3]]; return true; }
+  if ((m = l.match(/^AGUANTE,fin,rondas=(\d+),malas=(\d+),primera_mala=(\d+),peor_reposo=(\d+),tiempo_s=([\d.]+)/))) {
+    Object.assign(ag, { rondas:+m[1], malas:+m[2], primera:+m[3], peor:+m[4], t:+m[5] }); return true;
+  }
+  if ((m = l.match(/^RESULTADO,AGUANTE,(\w+)/))) {
+    const res = m[1] === "PASA" ? "PASA" : m[1] === "FALLA" ? "FALLA" : "CORTADA";
+    const lin = Object.entries(ag.tests).map(([k, v]) => `${k}: ${v[0]} pasa${v[1] ? `, ${v[1]} dudosa` : ""}${v[2] ? `, ${v[2]} falla` : ""}`);
+    const det = `${ag.rondas} rondas, ${ag.malas} con fallos` + (ag.primera ? ` (la primera en la ${ag.primera})` : "") +
+      (ag.tramas ? ` · TWAI ${ag.tramas[0]}/${ag.tramas[1]} tramas, ${ag.tramas[2]} errores` : "") + ` · peor reposo ${ag.peor} % · ${ag.t} s`;
+    $("robP1b").className = "badge " + (res === "CORTADA" ? "DUDOSA" : res); $("robP1b").textContent = res;
+    $("robP1d").textContent = det + "\n" + lin.join("\n");
+    anotarRob({ paso:"1 · placa", cond:"CANH/CANL sueltos", res, det, crit:"todas las rondas en PASA" });
+    ag = null; return true;
+  }
+  return false;
+}
+function finPaso2(){
+  if (!paso2) return;
+  const perd = Object.values(sal.patas).reduce((a, p) => a + (p.perd || 0), 0);
+  const tot = Object.values(sal.patas).reduce((a, p) => a + (p.tot || 0), 0);
+  const lmax = Math.max(0, ...Object.values(sal.patas).map(p => p.max || 0));
+  const f = sal.fin || { err:0, off:0 }, n = Object.keys(sal.patas).length;
+  const res = !n ? "FALLA" : (!perd && !f.err && !f.off && lmax < 2000) ? "PASA" : (perd <= tot / 100000 && !f.off) ? "DUDOSA" : "FALLA";
+  const det = `${n} patas (${Object.keys(sal.patas).join(", ") || "ninguna"}) · ${tot - perd}/${tot} respuestas · ${f.err} errores · ${f.off} BUS_OFF · latencia máx ${lmax} µs`;
+  $("robP2b").className = "badge " + res; $("robP2b").textContent = res; $("robP2d").textContent = det;
+  anotarRob({ paso:"2 · bus", cond:paso2.cond, res, det, crit:"0 pérdidas, 0 errores, 0 BUS_OFF, latencia < 2 ms" });
+  paso2 = null;
+}
+$("bAguante").onclick = () => enviar(`aguante ${$("selRondas").value}`);
+$("bAguanteBus").onclick = () => { paso2 = { cond:$("selCond").value }; $("robP2b").className = "badge"; $("robP2b").textContent = "corriendo"; $("robP2d").textContent = "Mira el avance en «Salud del bus en vivo»."; enviar(`salud ${$("selMin").value} 100`); };
+$("bRobBorrar").onclick = () => { if (confirm("¿Borrar el informe de robustez?")) { guardarRob([]); pintarRob(); } };
+$("bRobCsv").onclick = () => {
+  const r = leerRob(), cab = ["fecha","placa","mac","paso","cond","res","det","crit"];
+  const csv = [cab.join(",")].concat(r.map(x => cab.map(k => `"${String(x[k] ?? "").replace(/"/g, '""')}"`).join(","))).join("\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob(["﻿" + csv], { type:"text/csv" }));
+  a.download = "robustez_can.csv"; a.click();
+};
+
 let colaRafagas = [];
 function siguienteRafaga(){ if (colaRafagas.length) { const n = colaRafagas.shift(); setTimeout(() => enviar(`rafaga ${n} ${$("selN").value}`), 300); } }
 $("bRafaga").onclick = () => enviar(`rafaga ${$("selPata").value} ${$("selN").value}`);
@@ -494,7 +595,7 @@ $("bBorrar").onclick = () => { if (confirm("¿Borrar todo el registro de placas?
 
 /* ---------- puerto serie ---------- */
 function habilitar(on){
-  document.querySelectorAll(".cmd,#bMon,#bReiniciar,#tx,#bEnviar,#selPata,#selN,#bRafaga,#bRafagaTodas,#selSeg,#selHz,#bSalud,#bSaludParar").forEach(b => b.disabled = !on);
+  document.querySelectorAll(".cmd,#bMon,#bReiniciar,#tx,#bEnviar,#selPata,#selN,#bRafaga,#bRafagaTodas,#selSeg,#selHz,#bSalud,#bSaludParar,#selRondas,#bAguante,#selMin,#selCond,#bAguanteBus").forEach(b => b.disabled = !on);
   $("bConectar").textContent = on ? "Desconectar" : "Conectar";
   $("estado").textContent = on ? "Conectado" : "Desconectado";
   $("estado").style.color = on ? "var(--ok)" : "";
@@ -569,7 +670,7 @@ navigator.serial && navigator.serial.addEventListener("disconnect", e => { if (e
 /* Para probar sin placa: window.__lineas(["...", "..."]) */
 window.__lineas = ls => ls.forEach(linea);
 
-pintarPruebas(); pintarReg(); pintarBus(); pintarSalud(); grafica();
+pintarPruebas(); pintarReg(); pintarBus(); pintarSalud(); pintarRob(); grafica();
 </script>
 </body>
 </html>

@@ -201,6 +201,12 @@ A 500 kbit/s el bus admite unos 100 m de cable, y aquí mide menos de 2 m. El co
 - **COM9 ocupado ("acceso denegado")** al cargar: lo tenía el dashboard abierto. Hay que desconectar el dashboard antes de usar `esptool`.
 - **Consola de la maestra por el conector UART (CH343, COM9):** `diag_placa` usa allí UART a 115200. `prueba_can` sigue usando el USB nativo (COM4).
 
+**Registro del 26 y 27-nov:**
+
+- **Maestra con MCP2551 (CJMCU-2551) + conversor de nivel SparkFun BOB-12009 en RXD + 5 V externos.** Sin 5 V daba `MODULO_NO_TRANSMITE`. El CJMCU-2551 viene **sin la 120 Ω** (R2 y C2 vacías), y sin terminación el regreso a recesivo tardaba 6,9 µs: TWAI 0/200. Con 120 Ω entre CANH y CANL: TWAI 200/200, aguante 20 000/20 000 y subida de ≈ 630 ns. Con una 10 kΩ de CTX a 3,3 V, `ctx` pasa. Después, una prueba dio CRX fijo en 0 (`MODULO_DOMINANTE`): falta revisar los 5 V, el conversor y la soldadura de la 10 kΩ.
+- **Placa 6: bloquea el bus otra vez, ahora con el módulo nuevo.** El módulo se quedó **sin VCC** (soldadura abierta). Sin VCC, el SN65HVD230 se alimenta por su entrada D (CTX) a través del diodo de protección, CTX cae a 0–0,7 V y el bus queda dominante. Al resoldar VCC (3,29 V), el ESP32 ya sube CTX, pero el chip quedó dañado. Con `ctx1` mide: D 1,5 V, IO21 0,78 V, IO21↔D 0,3 Ω, CANH 2,7 V, CANL 0,3 V, **CANH−CANL 2,4 V (dominante en reposo)**, Rs 1,1 V. Su entrada D tiene una fuga a GND: hay que **cambiar el SN65HVD230 (VP230)**, o usar el VP231 o el VP232, que son compatibles pata a pata. Hasta entonces, la placa 6 va fuera del bus.
+- **Lección:** un transceptor sin VCC con el ESP32 encendido se daña y bloquea el bus. Revisar la soldadura de VCC del módulo en todas las placas.
+
 **Supuestos por confirmar en el robot:** los signos de encoder son iguales en las seis (en Fusion son copias giradas, no espejadas); el cero es la pose cero del CAD; el centro de masa está en el centro del cuerpo. Los límites usados son la intersección del CAN y los provisionales de MATLAB: coxa −0.5…0.6, fémur ±1 y tibia −1…0.7 rad.
 
 **Resultado:** con tibia ≤ 0.7 rad, radio 182 y altura 75 mm, el paso máximo es de 28 mm con 15 mm de elevación, 18 mm con 20 mm y ninguno (< 2 mm) con 25 mm. El límite de la tibia es lo que más restringe la marcha; medir su rango real antes de ampliarlo.
@@ -334,6 +340,12 @@ Los resultados posibles son:
 - `SIN_ACK`: nadie más hay en el bus.
 - `NO_RESPONDE`: hay placas en el bus, pero ninguna con ese ID.
 - `NO_SALIO`: el bus está pegado en dominante.
+
+**Robustez y medidas:**
+
+- `aguante N`: repite N veces las pruebas 1–4 y resume cuántas rondas pasan.
+- `retardo`: lazo CTX→módulo→CRX en ns. Se juzga por el promedio, porque la medida incluye ~550 ns del propio ESP32.
+- `ctx1`, `ctx0` y `ctxlibre`: dejan CTX fijo para medir el transceptor con el multímetro. Con CTX=1, CANH y CANL deben dar ≈ 2,3 V y R ≈ 3,3 V. Con CTX=0, CANH−CANL debe dar más de 1,5 V.
 
 Otros comandos: `escucha` (5 s sin transmitir, con la placa conectada al bus), `m` (monitor cada 1 s; gira a mano una articulación y deben cambiar sus cuentas), `cero`, `i` (MAC e ID de pata) y `h`.
 

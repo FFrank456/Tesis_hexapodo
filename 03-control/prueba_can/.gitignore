@@ -2,5 +2,6 @@
 **/build_cli/
 **/build_esp32/
 **/build_s3/
+**/build_s3_usb/
 **/sdkconfig
 **/sdkconfig.old
