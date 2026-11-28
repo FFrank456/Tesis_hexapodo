@@ -207,16 +207,21 @@ function loadMap() { try { const m = JSON.parse(localStorage.getItem("pata1_map_
   return { signo: G.signo.slice(), offset: G.offset.slice() }; }
 const enc2cad = (q) => q.map((x, i) => MAP.signo[i] * x + MAP.offset[i]);
 const cad2enc = (q) => q.map((x, i) => (x - MAP.offset[i]) / MAP.signo[i]);
-const withinEnc = (qe) => qe.every((x, i) => x >= G.lim_enc[i][0] - 1e-9 && x <= G.lim_enc[i][1] + 1e-9);
+/* Límites articulares en el marco CAD (físicos). Se miden en config.yaml en ángulos del encoder con
+   su mapeo original; se pasan a CAD con ESE mapeo, así no se mueven si cambias el offset en la página. */
+const LIM_CAD = G.lim_enc.map((l, i) => [G.signo[i] * l[0] + G.offset[i], G.signo[i] * l[1] + G.offset[i]].sort((a, b) => a - b));
+const outOfLimits = (qc) => qc.map((x, i) => (x < LIM_CAD[i][0] - 1e-9 || x > LIM_CAD[i][1] + 1e-9) ?
+  `${JN[i]} ${(x * DEG).toFixed(1)}° (rango ${(LIM_CAD[i][0] * DEG).toFixed(0)}…${(LIM_CAD[i][1] * DEG).toFixed(0)}°)` : null).filter(Boolean);
+const withinCad = (qc) => outOfLimits(qc).length === 0;
 function ikBest(p, qPrev) {
   const sols = [];
   for (const c of [1, -1]) for (const b of [G.rama_codo, -G.rama_codo]) {
     const q = ik(p, b, c); if (!q || norm(sub(fk(q), p)) > 1e-3) continue;
-    sols.push({ q, ok: withinEnc(cad2enc(q)), branch: b, coxa: c });
+    sols.push({ q, ok: withinCad(q), branch: b, coxa: c });
   }
   if (!sols.length) return { status: "fuera del alcance" };
   const ok = sols.filter(s => s.ok);
-  if (!ok.length) return { status: "fuera de los límites articulares", q: sols[0].q };
+  if (!ok.length) return { status: "fuera de los límites articulares: " + outOfLimits(sols[0].q).join(", "), q: sols[0].q };
   const ref = qPrev || G.q_inicial_cad;
   ok.sort((a, b) => norm(sub(a.q, ref)) - norm(sub(b.q, ref)));
   return { status: "ok", ...ok[0] };
@@ -427,7 +432,7 @@ function updRec() { document.getElementById("recBtn").textContent = recording ? 
 async function sendJointTargets(qCad, why, ask = true) {
   if (!last) { log("Sin telemetría: conecta primero", "err"); return false; }
   const qe = cad2enc(qCad);
-  if (!withinEnc(qe)) { log("Objetivo fuera de los límites articulares; no se envía", "err"); return false; }
+  if (!withinCad(qCad)) { log("Objetivo fuera de los límites articulares (" + outOfLimits(qCad).join(", ") + "); no se envía", "err"); return false; }
   const jump = Math.max(...qe.map((x, i) => Math.abs(x - last.qe[i])));
   if (ask && jump > 1.2 && !seq.running && !confirm(`Una articulación tiene que girar ${jump.toFixed(2)} rad. ¿Enviar igual?`)) return false;
   for (let i = 0; i < 3; i++) { const md = last.m[i].mode;
