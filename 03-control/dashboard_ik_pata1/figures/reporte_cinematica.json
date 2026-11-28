@@ -2,33 +2,33 @@
   "singularidades": [
     {
       "tipo": "pata estirada (fémur y tibia alineados)",
-      "q2_cad_rad": -0.2930671539698593,
-      "q2_enc_rad": -0.2930671539698593,
+      "q2_cad_rad": -0.2701059913507162,
+      "q2_enc_rad": -0.2701059913507162,
       "dentro_de_limites": true
     },
     {
       "tipo": "pata plegada",
-      "q2_cad_rad": 2.8485254996199334,
-      "q2_enc_rad": 2.8485254996199334,
+      "q2_cad_rad": 2.871486662239077,
+      "q2_enc_rad": 2.871486662239077,
       "dentro_de_limites": false
     },
     {
       "tipo": "pie sobre el eje de la coxa (rho = 0; la coxa queda indeterminada)",
-      "radio_mm": 2.2505175800173887,
-      "rho_min_mm": -16.684146675326392,
-      "rho_max_mm": 211.71575942689063,
+      "radio_mm": 0.0749,
+      "rho_min_mm": -10.208430106090917,
+      "rho_max_mm": 209.70687686740283,
       "dentro_de_limites": true
     }
   ],
   "geometria": {
-    "coxa_radial_mm": 49.999962005425076,
-    "coxa_z_mm": 6.050000037253002,
-    "coxa_axial_mm": 18.04999945176096,
-    "femur_L1_mm": 60.05209868613467,
-    "femur_angulo_deg": -2.385941998631488,
-    "tibia_L2_mm": 101.6672930519419,
-    "tibia_angulo_deg": -19.177453035015102,
-    "desplazamiento_axial_total_mm": 2.2505175800173887
+    "coxa_radial_mm": 49.9953,
+    "coxa_z_mm": 6.05,
+    "coxa_axial_mm": 0.0,
+    "femur_L1_mm": 60.00000000000001,
+    "femur_angulo_deg": 0.0,
+    "tibia_L2_mm": 99.7164575197595,
+    "tibia_angulo_deg": -15.475933325593145,
+    "desplazamiento_axial_total_mm": 0.0749
   },
   "limites_cad_rad": [
     [
@@ -46,13 +46,13 @@
   ],
   "ik": {
     "n_muestras": 29791,
-    "error_max_m": 4.928080417233778e-16,
-    "error_medio_m": 1.4191214922545722e-16,
+    "error_max_m": 2.6143727386694524e-16,
+    "error_medio_m": 6.47709667414783e-17,
     "cerca_de_singular": 961,
     "caja_puntos": 20000,
-    "caja_dentro_limites": 2542,
-    "caja_fuera_limites": 8563,
-    "caja_fuera_alcance": 8893,
-    "caja_cilindro_coxa": 2
+    "caja_dentro_limites": 2940,
+    "caja_fuera_limites": 7945,
+    "caja_fuera_alcance": 9115,
+    "caja_cilindro_coxa": 0
   }
 }

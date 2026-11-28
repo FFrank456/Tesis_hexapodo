@@ -14,15 +14,38 @@ def kin():
     return LegKinematics(load_config())
 
 
+def _legacy_cfg():
+    cfg = load_config()
+    cfg["geometria"] = {"medicion_fusion": "../../01-mecanica/cinematica-directa-pata/medicion_fusion_u2.json",
+                        "cuerpo_pie": "soporte_tibia_A"}
+    return cfg
+
+
 def test_fk_matches_matlab_model():
-    """Mismo punto y pose que el README de cinemática (MATLAB: [220.999, -129.260, 7.519] mm)."""
-    k = LegKinematics(load_config(), foot_point_mm=[222.264, -130.525, -21.475])
+    """Con la medición anterior (marco raíz de Fusion), mismo punto y pose que el README de
+    cinemática: MATLAB da [220.999, -129.260, 7.519] mm."""
+    k = LegKinematics(_legacy_cfg(), foot_point_mm=[222.264, -130.525, -21.475])
     p = k.fk(np.radians([0, 20, 15])) * 1000
     assert np.allclose(p, [220.999, -129.260, 7.519], atol=1e-3)
 
 
-def test_fk_zero_pose_is_measured_foot(kin):
-    assert np.allclose(kin.fk(np.zeros(3)) * 1000, [244.830, -109.677, -39.550], atol=1e-3)
+def test_fk_zero_pose_is_foot_sphere_center(kin):
+    """En el marco de la pata, q = 0 (estirada) da el centro de la esfera del pie leído de Fusion."""
+    assert np.allclose(kin.fk(np.zeros(3)) * 1000, kin.source["pie"]["centro_esfera_mm"], atol=1e-6)
+
+
+def test_leg_frame_axes_and_signs(kin):
+    """Origen en el eje de la coxa; +q0 gira hacia -Y (horario visto desde arriba),
+    +q1 sube el pie y +q2 lo baja (convención de Fusion)."""
+    assert np.allclose(kin.p0, 0)
+    d = lambda i: kin.fk(np.eye(3)[i] * 0.1) - kin.fk(np.zeros(3))
+    assert d(0)[1] < 0 and d(1)[2] > 0 and d(2)[2] < 0
+    assert np.allclose(kin.p1[1:], kin.p2[1:])          # J1 y J2 a la misma altura (fémur horizontal)
+
+
+def test_legacy_geometry_still_loads():
+    k = LegKinematics(_legacy_cfg())
+    assert np.allclose(k.fk(np.zeros(3)) * 1000, [244.830, -109.677, -39.550], atol=1e-3)
 
 
 def test_fk_ik_roundtrip_whole_workspace(kin):

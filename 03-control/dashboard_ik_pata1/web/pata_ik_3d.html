@@ -2,173 +2,194 @@
 <html lang="es">
 <head>
 <meta charset="utf-8">
-<title>Pata 1 · cinemática en vivo 3D</title>
+<title>Pata 1 · gemelo digital</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
   :root { --bg:#f9f9f7; --card:#fcfcfb; --ink:#0b0b0b; --ink2:#52514e; --muted:#898781; --line:#e1e0d9;
-          --real:#2a78d6; --ref:#52514e; --prev:#eb6834; --ok:#0ca30c; --warn:#fab219; --crit:#d03b3b; }
+          --real:#2a78d6; --twin:#eb6834; --ref:#52514e; --ok:#0ca30c; --warn:#fab219; --crit:#d03b3b; }
   * { box-sizing:border-box; }
   body { margin:0; font:13px system-ui,-apple-system,"Segoe UI",sans-serif; color:var(--ink); background:var(--bg); }
-  header { display:flex; gap:10px; align-items:center; padding:8px 14px; border-bottom:1px solid var(--line); background:#fff; flex-wrap:wrap; }
-  header h1 { font-size:16px; margin:0 12px 0 0; }
-  button { font:inherit; padding:5px 10px; border:1px solid #c3c2b7; background:#fff; border-radius:6px; cursor:pointer; }
+  header { display:flex; gap:8px; align-items:center; padding:8px 14px; border-bottom:1px solid var(--line); background:#fff; flex-wrap:wrap; position:sticky; top:0; z-index:5; }
+  header h1 { font-size:16px; margin:0 10px 0 0; }
+  button, select { font:inherit; padding:5px 10px; border:1px solid #c3c2b7; background:#fff; border-radius:6px; cursor:pointer; }
   button:hover { background:#f0efec; } button:disabled { opacity:.45; cursor:default; }
   button.primary { background:var(--real); color:#fff; border-color:var(--real); }
   #stop { background:var(--crit); color:#fff; border-color:var(--crit); font-weight:700; padding:6px 18px; }
-  #status { color:var(--ink2); }
-  main { display:grid; grid-template-columns: minmax(480px,1fr) 430px; gap:12px; padding:12px; }
+  .pill { padding:2px 8px; border-radius:10px; font-size:11px; border:1px solid var(--line); color:var(--ink2); }
+  main { display:grid; grid-template-columns: minmax(520px,1fr) 400px; gap:12px; padding:12px; }
   .card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:10px 12px; margin-bottom:12px; }
-  .card h2 { font-size:13px; margin:0 0 8px; text-transform:uppercase; letter-spacing:.04em; color:var(--ink2); }
-  #view { width:100%; height:640px; display:block; background:#fff; border:1px solid var(--line); border-radius:8px; cursor:grab; }
+  .card h2 { font-size:12px; margin:0 0 8px; text-transform:uppercase; letter-spacing:.05em; color:var(--ink2); }
+  #viewWrap { position:relative; width:100%; height:600px; border:1px solid var(--line); border-radius:8px; overflow:hidden; background:#fff; }
+  #gl, #ov { position:absolute; inset:0; width:100%; height:100%; }
+  #ov { cursor:grab; }
+  #viewInfo { position:absolute; left:10px; bottom:8px; font-size:11px; color:var(--muted); pointer-events:none; }
+  #angleBox { position:absolute; right:10px; top:10px; background:rgba(255,255,255,.92); border:1px solid var(--line); border-radius:6px; padding:6px 8px; font-variant-numeric:tabular-nums; pointer-events:none; }
+  #angleBox { width:auto; } #angleBox td, #angleBox th { padding:1px 6px; text-align:right; border:0; }
+  #angleBox td:first-child { text-align:left; }
   table { border-collapse:collapse; width:100%; font-variant-numeric:tabular-nums; }
   th, td { padding:3px 5px; text-align:right; border-bottom:1px solid var(--line); }
   th:first-child, td:first-child { text-align:left; }
   .row { display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin:4px 0; }
-  input[type=number] { width:78px; font:inherit; padding:3px 4px; border:1px solid #c3c2b7; border-radius:4px; }
-  .big { font-size:22px; font-weight:600; font-variant-numeric:tabular-nums; }
+  input[type=number] { width:74px; font:inherit; padding:3px 4px; border:1px solid #c3c2b7; border-radius:4px; }
+  .big { font-size:20px; font-weight:600; font-variant-numeric:tabular-nums; }
   .legend span { display:inline-flex; align-items:center; gap:5px; margin-right:12px; color:var(--ink2); }
-  .sw { width:18px; height:3px; display:inline-block; }
-  #log { height:120px; overflow:auto; font:11px ui-monospace,Consolas,monospace; background:#fff; border:1px solid var(--line); padding:4px; }
+  .sw { width:18px; height:4px; display:inline-block; border-radius:2px; }
+  #log { height:110px; overflow:auto; font:11px ui-monospace,Consolas,monospace; background:#fff; border:1px solid var(--line); padding:4px; }
   .err { color:var(--crit); } .ack { color:#006300; } .muted { color:var(--muted); }
-  .pill { padding:1px 7px; border-radius:10px; font-size:11px; border:1px solid var(--line); }
-  #spark { width:100%; height:220px; display:block; }
-  @media (max-width: 1000px) { main { grid-template-columns: 1fr; } #view { height:480px; } }
   .note { color:var(--ink2); font-size:12px; margin:4px 0; }
+  details > summary { cursor:pointer; font-size:12px; text-transform:uppercase; letter-spacing:.05em; color:var(--ink2); font-weight:600; }
+  /* panel del gemelo */
+  #twinPanel { padding:0 12px 16px; }
+  .kpis { display:grid; grid-template-columns: repeat(3, 1fr); gap:10px; margin-bottom:10px; }
+  .kpi { background:#fff; border:1px solid var(--line); border-radius:8px; padding:8px 10px; }
+  .kpi h3 { margin:0 0 4px; font-size:13px; }
+  .kpi .grid { display:grid; grid-template-columns: 1fr auto; gap:2px 10px; font-variant-numeric:tabular-nums; color:var(--ink2); font-size:12px; }
+  .kpi .grid b { color:var(--ink); font-weight:600; text-align:right; }
+  .charts { display:grid; grid-template-columns: repeat(3, 1fr); gap:8px; }
+  .charts canvas { width:100%; height:170px; background:#fff; border:1px solid var(--line); border-radius:6px; display:block; }
+  .rowlabel { grid-column: 1 / -1; font-size:12px; font-weight:600; color:var(--ink2); text-transform:uppercase; letter-spacing:.05em; margin-top:6px; }
+  #footChart { width:100%; height:150px; background:#fff; border:1px solid var(--line); border-radius:6px; display:block; }
+  @media (max-width: 1100px) { main { grid-template-columns: 1fr; } .charts, .kpis { grid-template-columns: 1fr; } }
 </style>
 </head>
 <body>
 <header>
-  <h1>Pata 1 · cinemática en vivo</h1>
+  <h1>Pata 1 · gemelo digital</h1>
   <button id="connect" class="primary">Conectar a la pata</button>
-  <button id="simBtn" title="ESP32 simulado en el navegador, para practicar sin la pata">Modo simulado</button>
+  <button id="simBtn" title="ESP32 simulado: un gemelo con parámetros alterados hace de pata real">Modo simulado</button>
+  <button id="homeBtn" title="Manda las tres articulaciones a 0 (pata estirada)">Home (todo en 0)</button>
   <button id="stop" title="Tecla Esc">STOP</button>
-  <span id="status">Desconectado</span>
+  <span id="status" class="muted">Desconectado</span>
   <span id="selftest" class="pill"></span>
+  <span id="gainsSrc" class="pill"></span>
 </header>
 <p id="nosupport" class="err" style="display:none;padding:0 14px">Este navegador no tiene Web Serial: abre la página en Chrome o Edge (no en un perfil administrado).</p>
 <main>
   <section>
-    <canvas id="view"></canvas>
+    <div id="viewWrap">
+      <canvas id="gl"></canvas><canvas id="ov"></canvas>
+      <table id="angleBox"><tr><th></th><th>real</th><th>gemelo</th><th>ref</th></tr></table>
+      <div id="viewInfo">Arrastrar: girar · Shift/clic derecho: desplazar · rueda: zoom · doble clic: vista inicial</div>
+    </div>
     <div class="row legend" style="margin-top:6px">
-      <span><i class="sw" style="background:var(--real)"></i>pata real (encoders)</span>
-      <span><i class="sw" style="background:var(--ref);opacity:.7"></i>referencia del firmware</span>
-      <span><i class="sw" style="background:var(--prev)"></i>vista previa IK</span>
-      <span><i class="sw" style="background:var(--crit);height:8px;width:8px;border-radius:4px"></i>objetivo</span>
-      <span class="muted">Arrastra para girar · rueda para zoom · doble clic para reiniciar la vista</span>
+      <span><i class="sw" style="background:#5d6b7a"></i>pata real (encoders)</span>
+      <span><i class="sw" style="background:var(--twin)"></i>gemelo digital (simulación)</span>
+      <span><i class="sw" style="background:var(--ref)"></i>referencia del firmware</span>
+      <span><i class="sw" style="background:#6250d6"></i>vista previa IK (sin enviar)</span>
+      <span><i class="sw" style="background:var(--crit);width:8px;height:8px"></i>objetivo</span>
     </div>
     <div class="row">
-      <label><input type="checkbox" id="showWs" checked> espacio de trabajo</label>
-      <label><input type="checkbox" id="showTrail" checked> rastro del pie (5 s)</label>
+      <label><input type="checkbox" id="showMesh" checked> mallas de Fusion</label>
+      <label><input type="checkbox" id="showTwin" checked> gemelo</label>
       <label><input type="checkbox" id="showRef" checked> referencia</label>
-      <button id="viewTop" title="Esquema con las articulaciones alineadas entre la base y el pie">Vista superior</button><button id="viewSide">Vista lateral</button><button id="viewIso">Isométrica</button>
-    </div>
-    <div class="card" style="margin-top:8px">
-      <h2>Respuesta del pie al escalón</h2>
-      <div class="legend"><span style="color:#2a78d6">● Desplazamiento medido</span>
-        <span style="color:#52514e">– – Referencia</span></div>
-      <canvas id="spark"></canvas>
-      <div class="note" id="sparkInfo"></div>
+      <label><input type="checkbox" id="showTrail" checked> rastro del pie (5 s)</label>
+      <label><input type="checkbox" id="showWs"> espacio de trabajo</label>
+      <button data-view="iso">Isométrica</button><button data-view="top">Superior</button>
+      <button data-view="side">Lateral</button><button data-view="front">Frontal</button>
+      <button id="png3d">Guardar imagen 3D</button>
     </div>
   </section>
   <aside>
     <div class="card">
-      <h2>Estado</h2>
-      <table id="joints">
-        <tr><th>Art.</th><th>modo</th><th>q enc [rad]</th><th>q CAD [°]</th><th>ref CAD [°]</th><th>error [°]</th></tr>
-      </table>
-      <div class="row" style="margin-top:8px;justify-content:space-between">
-        <div>Pie real [mm]<div id="footReal" class="big">—</div></div>
+      <h2>Pie (efector final)</h2>
+      <div class="row" style="justify-content:space-between">
+        <div>Real [mm]<div id="footReal" class="big">—</div></div>
         <div style="text-align:right">Error al objetivo<div id="footErr" class="big">—</div></div>
       </div>
-      <div class="note" id="footRef"></div>
+      <div class="note" id="footInfo"></div>
     </div>
-
     <div class="card">
       <h2>Mover el pie (cinemática inversa)</h2>
       <div class="row">x <input id="tx" type="number" step="1"> y <input id="ty" type="number" step="1"> z <input id="tz" type="number" step="1"> mm</div>
       <div class="row">
-        <button data-d="0,5">avance +5</button><button data-d="0,-5">avance −5</button>
-        <button data-d="1,5">lateral +5</button><button data-d="1,-5">lateral −5</button>
-        <button data-d="2,5">arriba +5</button><button data-d="2,-5">abajo −5</button>
+        <button data-d="0,5">x +5</button><button data-d="0,-5">x −5</button>
+        <button data-d="1,5">y +5</button><button data-d="1,-5">y −5</button>
+        <button data-d="2,5">z +5</button><button data-d="2,-5">z −5</button>
       </div>
-      <div class="row">
-        <button id="toCenter">Postura central</button>
-        <button id="fromReal">Copiar pie real</button>
-        <button id="send" class="primary">Enviar a la pata</button>
-      </div>
+      <div class="row"><button id="toHome">Pie en home</button><button id="toCenter">Postura central</button>
+        <button id="fromReal">Copiar pie real</button><button id="send" class="primary">Enviar a la pata</button></div>
       <div class="note" id="ikInfo"></div>
     </div>
-
     <div class="card">
       <h2>Secuencias de prueba</h2>
       <div class="row">
-        <select id="seq">
-          <option value="p2p">Punto a punto (config.yaml)</option>
-          <option value="circ">Círculo por puntos</option>
-          <option value="gait">Ciclo de paso por puntos</option>
-        </select>
+        <select id="seq"><option value="p2p">Punto a punto</option><option value="circ">Círculo por puntos</option><option value="gait">Ciclo de paso por puntos</option></select>
         puntos <input id="seqN" type="number" value="12" min="4" max="60" style="width:52px">
         espera <input id="seqDwell" type="number" value="0.5" step="0.1" style="width:52px"> s
       </div>
-      <div class="row">
-        <button id="seqGo" class="primary">Iniciar</button><button id="seqStop">Detener</button>
-        <label><input type="checkbox" id="seqRec" checked> grabar CSV</label>
-      </div>
-      <div class="note" id="seqInfo">El objetivo siguiente se manda cuando las tres articulaciones llegan (HOLD) o pasan 8 s.</div>
+      <div class="row"><button id="seqGo" class="primary">Iniciar</button><button id="seqStop">Detener</button>
+        <label><input type="checkbox" id="seqRec" checked> grabar CSV</label></div>
+      <div class="note" id="seqInfo">El punto siguiente se manda cuando las tres articulaciones llegan (HOLD) o pasan 8 s.</div>
     </div>
-
     <div class="card">
       <h2>Registro</h2>
       <div class="row"><button id="recBtn">Grabar CSV</button><span id="recInfo" class="muted"></span></div>
+      <div class="note">Incluye real, gemelo, referencia y pie. Las figuras para la tesis salen con <code>python figuras_gemelo.py archivo.csv</code>.</div>
     </div>
-
-    <div class="card">
-      <h2>Mapeo encoder → CAD</h2>
-      <div class="note">q_CAD = signo · q_enc + offset. Los signos se guardan en este navegador. Los offsets vuelven a cero al recargar.</div>
+    <details class="card">
+      <summary>Mapeo encoder → CAD</summary>
+      <div class="note">q_CAD = signo · q_enc + offset. Con la pata arrancando estirada en 0, el offset es 0.</div>
       <table id="mapTbl"><tr><th>Art.</th><th>signo</th><th>offset [rad]</th></tr></table>
-      <div class="row">
-        <button id="zeroCad" title="Pon la pata físicamente en la pose cero del CAD y pulsa">La pata está en la pose cero del CAD</button>
-        <button id="mapReset">Poner offsets en cero</button>
-      </div>
-    </div>
-
+      <div class="row"><button id="zeroCad">La pata está estirada (pose cero)</button><button id="mapReset">Valores de config.yaml</button></div>
+    </details>
     <div class="card"><h2>Mensajes</h2><div id="log"></div></div>
   </aside>
 </main>
 
+<section id="twinPanel">
+  <div class="card">
+    <div class="row" style="justify-content:space-between">
+      <h2 style="margin:0">Real vs gemelo digital</h2>
+      <div class="row">
+        ventana <select id="win"><option>10</option><option selected>20</option><option>60</option><option>120</option><option>180</option></select> s
+        <button id="pause">Pausar</button><button id="clearCh">Limpiar</button>
+        <label title="Al llegar un objetivo nuevo, el gemelo parte del estado medido de la pata"><input type="checkbox" id="resync" checked> re-sincronizar en cada objetivo</label>
+        <button id="pngCharts">Guardar gráficas (PNG)</button>
+      </div>
+    </div>
+    <div class="note">El gemelo recibe los mismos objetivos que la pata y simula la cascada del firmware (mismas ganancias; usa las de la placa en cuanto llegan las líneas CFG) con la planta identificada. Pasa el ratón por una gráfica para ver los valores; el cursor es común a todas.</div>
+    <div class="kpis" id="kpis"></div>
+    <div class="charts" id="charts"></div>
+    <div class="rowlabel">Pie: error de posición</div>
+    <canvas id="footChart"></canvas>
+  </div>
+</section>
+
 <script src="geometria_pata1.js"></script>
+<script src="mallas_pata1.js"></script>
+<script src="visor3d.js"></script>
+<script src="gemelo.js"></script>
+<script src="graficas.js"></script>
 <script>
 "use strict";
-const G = window.PATA1;
+const G = window.PATA1, GEM = G.gemelo;
 const JN = ["Coxa", "Fémur", "Tibia"];
 const MODE_TXT = { 0: "libre", 1: "PWM", 2: "corriente", 3: "posición", 4: "velocidad" };
-const STATE_TXT = ["TRACK", "REVERSA", "HOLD", "LLEGANDO"];
 const FIELDS_PER_MOTOR = 11;
+const DEG = 180 / Math.PI;
 
-/* =================================================================== cinemática */
+/* =================================================================== cinemática (mm, marco de la pata) */
 const sub = (a, b) => [a[0]-b[0], a[1]-b[1], a[2]-b[2]];
 const add = (a, b) => [a[0]+b[0], a[1]+b[1], a[2]+b[2]];
 const scl = (a, s) => [a[0]*s, a[1]*s, a[2]*s];
 const dot = (a, b) => a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
-const cross = (a, b) => [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];
 const norm = (a) => Math.hypot(a[0], a[1], a[2]);
 const wrap = (x) => { x = (x + Math.PI) % (2*Math.PI); if (x < 0) x += 2*Math.PI; return x - Math.PI; };
-function rot(v, axis, ang) {                    // Rodrigues
-  const k = scl(axis, 1 / norm(axis)), c = Math.cos(ang), s = Math.sin(ang);
-  return add(add(scl(v, c), scl(cross(k, v), s)), scl(k, dot(k, v) * (1 - c)));
+function rotM(axis, ang) {           // matriz 3x3 (filas), Rodrigues
+  const n = norm(axis), [x, y, z] = axis.map(v => v / n), c = Math.cos(ang), s = Math.sin(ang), C = 1 - c;
+  return [[c + x*x*C, x*y*C - z*s, x*z*C + y*s], [y*x*C + z*s, c + y*y*C, y*z*C - x*s], [z*x*C - y*s, z*y*C + x*s, c + z*z*C]];
 }
-const C = sub(G.p1, G.p0), F = sub(G.p2, G.p1), T = sub(G.pf, G.p2);
-function points(q) {                            // q en el marco CAD (rad) -> [J0, J1, J2, pie] en mm
-  const R0 = (v) => rot(v, G.a0, q[0]);
-  const R1 = (v) => rot(v, G.a1, q[1]);
-  const R2 = (v) => rot(v, G.a2, q[2]);
-  const J1 = add(G.p0, R0(C));
-  const J2 = add(J1, R0(R1(F)));
-  const P = add(J2, R0(R1(R2(T))));
-  return [G.p0, J1, J2, P];
+const mv = (R, v) => [dot(R[0], v), dot(R[1], v), dot(R[2], v)];
+const mm3 = (A, B) => A.map(r => [0, 1, 2].map(j => r[0]*B[0][j] + r[1]*B[1][j] + r[2]*B[2][j]));
+const C_ = sub(G.p1, G.p0), F_ = sub(G.p2, G.p1), T_ = sub(G.pf, G.p2);
+function frames(q) {
+  const R0 = rotM(G.a0, q[0]), R01 = mm3(R0, rotM(G.a1, q[1])), R012 = mm3(R01, rotM(G.a2, q[2]));
+  const J1 = add(G.p0, mv(R0, C_)), J2 = add(J1, mv(R01, F_)), P = add(J2, mv(R012, T_));
+  return { R: [R0, R01, R012], pts: [G.p0, J1, J2, P] };
 }
+const points = (q) => frames(q).pts;
 const fk = (q) => points(q)[3];
-function ik(p, branch, coxa) {                  // misma derivación que kinematics.py
+function ik(p, branch, coxa) {
   const v = sub(p, G.p0), h2 = v[0]*v[0] + v[1]*v[1];
   if (h2 < G.d_ax * G.d_ax) return null;
   const rho = coxa * Math.sqrt(h2 - G.d_ax * G.d_ax);
@@ -178,236 +199,201 @@ function ik(p, branch, coxa) {                  // misma derivación que kinemat
   const D = (X*X + Y*Y - G.L1*G.L1 - G.L2*G.L2) / (2 * G.L1 * G.L2);
   if (Math.abs(D) > 1) return null;
   const phi = branch * Math.acos(D);
-  const q2 = wrap(G.alpha2 - G.alpha1 - phi);
   const th1 = Math.atan2(Y, X) - Math.atan2(G.L2 * Math.sin(phi), G.L1 + G.L2 * Math.cos(phi));
-  return [q0, wrap(th1 - G.alpha1), q2];
+  return [q0, wrap(th1 - G.alpha1), wrap(G.alpha2 - G.alpha1 - phi)];
 }
-/* mapeo encoder <-> CAD (editable) */
 let MAP = loadMap();
-function loadMap() {
-  let signo = G.signo.slice();
-  try {
-    const saved = JSON.parse(localStorage.getItem("pata1_map"));
-    if (saved && Array.isArray(saved.signo) && saved.signo.length === 3 &&
-        saved.signo.every(value => value === 1 || value === -1)) signo = saved.signo;
-  } catch (e) {}
-  return { signo, offset: [0, 0, 0] };
-}
+function loadMap() { try { const m = JSON.parse(localStorage.getItem("pata1_map_v2")); if (m && m.signo) return m; } catch (e) {}
+  return { signo: G.signo.slice(), offset: G.offset.slice() }; }
 const enc2cad = (q) => q.map((x, i) => MAP.signo[i] * x + MAP.offset[i]);
 const cad2enc = (q) => q.map((x, i) => (x - MAP.offset[i]) / MAP.signo[i]);
 const withinEnc = (qe) => qe.every((x, i) => x >= G.lim_enc[i][0] - 1e-9 && x <= G.lim_enc[i][1] + 1e-9);
-function ikBest(p, qPrevCad) {
+function ikBest(p, qPrev) {
   const sols = [];
   for (const c of [1, -1]) for (const b of [G.rama_codo, -G.rama_codo]) {
-    const q = ik(p, b, c); if (!q) continue;
-    if (norm(sub(fk(q), p)) > 1e-3) continue;
+    const q = ik(p, b, c); if (!q || norm(sub(fk(q), p)) > 1e-3) continue;
     sols.push({ q, ok: withinEnc(cad2enc(q)), branch: b, coxa: c });
   }
   if (!sols.length) return { status: "fuera del alcance" };
   const ok = sols.filter(s => s.ok);
   if (!ok.length) return { status: "fuera de los límites articulares", q: sols[0].q };
-  const ref = qPrevCad || G.q_central_cad;
+  const ref = qPrev || G.q_inicial_cad;
   ok.sort((a, b) => norm(sub(a.q, ref)) - norm(sub(b.q, ref)));
   return { status: "ok", ...ok[0] };
 }
 const relKnee = (q) => G.alpha2 - G.alpha1 - q[2];
-
-/* autoprueba contra Python */
 (function selfTest() {
   let e = 0, ei = 0;
-  for (const t of G.pruebas) {
-    e = Math.max(e, norm(sub(fk(t.q), t.p)));
-    let best = Infinity;
-    for (const c of [1, -1]) for (const b of [1, -1]) { const q = ik(t.p, b, c); if (q) best = Math.min(best, norm(sub(fk(q), t.p))); }
-    ei = Math.max(ei, best);
-  }
-  const el = document.getElementById("selftest");
-  const ok = e < 1e-3 && ei < 1e-3;          // 1e-3 mm = 1e-6 m (los datos se exportan redondeados a 1e-6 mm)
-  el.textContent = ok ? `modelo OK: FK igual a Python (${e.toExponential(1)} mm), FK(IK) ${ei.toExponential(1)} mm`
-                      : `¡modelo distinto de Python! (${e.toExponential(1)} mm)`;
+  for (const t of G.pruebas) { e = Math.max(e, norm(sub(fk(t.q), t.p)));
+    let best = Infinity; for (const c of [1, -1]) for (const b of [1, -1]) { const q = ik(t.p, b, c); if (q) best = Math.min(best, norm(sub(fk(q), t.p))); }
+    ei = Math.max(ei, best); }
+  const el = document.getElementById("selftest"), ok = e < 1e-3 && ei < 1e-3;
+  el.textContent = ok ? "modelo = Python ✓" : `modelo distinto de Python (${e.toExponential(1)} mm)`;
+  el.title = `FK vs Python ${e.toExponential(1)} mm · FK(IK) ${ei.toExponential(1)} mm · ${G.marco}`;
   el.style.color = ok ? "#006300" : "var(--crit)";
 })();
 
 /* =================================================================== estado */
-let dirty = true;                // hay que redibujar la vista 3D
-let last = null;                 // última muestra T
-let target = null;               // objetivo cartesiano (mm)
-let preview = null;              // q CAD de la vista previa
-const trail = [];                // [t, pie]
-const STEP_SECONDS = 20;
-let stepTrace = null;
-function finishStep(reason) {
-  if (stepTrace && !stepTrace.end) stepTrace.end = reason;
-}
-function startStep(origin, goal) {
-  const delta = sub(goal, origin);
-  const amplitude = norm(delta);
-  if (amplitude < 1e-3) {
-    finishStep("Objetivo sin desplazamiento");
-    return;
-  }
-  stepTrace = {origin, goal, amplitude, axis: scl(delta, 1 / amplitude),
-    start: performance.now(), samples: [[0, 0]], error: amplitude, end: ""};
-}
-function sampleStep(foot) {
-  if (!stepTrace || stepTrace.end || !foot.every(Number.isFinite)) return;
-  const elapsed = (performance.now() - stepTrace.start) / 1000;
-  if (elapsed > STEP_SECONDS) { finishStep("Captura completa"); return; }
-  stepTrace.samples.push([elapsed, dot(sub(foot, stepTrace.origin), stepTrace.axis)]);
-  stepTrace.error = norm(sub(foot, stepTrace.goal));
-}
-let recording = null;            // {rows:[], header}
+let dirty = true, last = null, target = null, preview = null, recording = null;
+const trail = [], trailTwin = [];
 const logEl = document.getElementById("log");
-function log(msg, cls = "") {
-  const d = document.createElement("div"); d.className = cls; d.textContent = msg;
-  logEl.appendChild(d); while (logEl.childNodes.length > 300) logEl.removeChild(logEl.firstChild);
-  logEl.scrollTop = logEl.scrollHeight;
+function log(msg, cls = "") { const d = document.createElement("div"); d.className = cls; d.textContent = msg;
+  logEl.appendChild(d); while (logEl.childNodes.length > 300) logEl.removeChild(logEl.firstChild); logEl.scrollTop = logEl.scrollHeight; }
+
+/* =================================================================== gemelo digital */
+let twin = null, twinT = null;
+const twinCfg = JSON.parse(JSON.stringify(GEM.control));
+const cfgFrom = { 0: false, 1: false, 2: false };
+function ensureTwin(qe) { if (!twin) { twin = new Gemelo.Twin(GEM, qe); twinT = null; } }
+function applyCfgLine(line) {
+  const f = line.split(","), i = parseInt(f[1].slice(1), 10) - 1; if (!(i >= 0 && i < 3) || f.length < 16) return;
+  const v = f.slice(3).map(parseFloat), C = twinCfg, set = (k, x) => { if (isFinite(x)) C[k][i] = x; };
+  set("pid_kp", v[0]); set("pid_ki", v[1]); set("pwm_max_pct", v[3]); set("spi_kp", v[4]); set("spi_ki", v[5]);
+  set("ilimit_a", v[6]); set("ppi_kp", v[7]); set("ppi_ki", v[8]); set("vmax_rad_s", v[9]); set("acel_rad_s2", v[10]);
+  set("tolerancia_rad", v[11]);
+  if (f.length > 20) { set("frici_ic_a", v[17]); set("frici_is_a", v[18]); }
+  if (f.length > 30) { set("fricb_inicio", v[25]); set("fricb_rampa_s", v[26] / 1000); set("dither_pct", v[27]); set("dither_hz", v[28]); }
+  const terms = [];
+  if (isFinite(v[15]) && v[15] !== 0) terms.push({ g: v[15], theta0: v[16], motor: null, c: 0 });
+  if (f.length > 25 && isFinite(v[21]) && v[21] !== 0 && v[23] >= 1) terms.push({ g: v[21], theta0: v[22], motor: (v[23] | 0) - 1, c: v[24] });
+  C.gravedad[i] = terms; C.freno_en_hold = !!v[13];
+  if (twin) twin.setGains(i, C);
+  if (!cfgFrom[i]) { cfgFrom[i] = true; log(`Gemelo: ganancias de M${i + 1} tomadas de la placa (CFG)`, "ack"); }
+  updGainsSrc();
+}
+function updGainsSrc() { const n = Object.values(cfgFrom).filter(Boolean).length;
+  document.getElementById("gainsSrc").textContent = n === 3 ? "gemelo: ganancias de la placa" : n ? `gemelo: placa ${n}/3, resto config.yaml` : "gemelo: ganancias de config.yaml"; }
+updGainsSrc();
+function syncTwin(m, t) {
+  const qe = m.map(s => s.pos); ensureTwin(qe);
+  const dt = twinT === null ? 0 : Math.min(0.2, Math.max(0, t - twinT)); twinT = t;
+  const resync = document.getElementById("resync").checked;
+  for (let i = 0; i < 3; i++) {
+    const s = m[i], tj = twin.J[i];
+    if (s.mode !== 3) { if (tj.mode !== 0 || Math.abs(tj.theta - s.pos) > 1e-9) twin.release(i, s.pos); continue; }
+    if (tj.mode !== 3) twin.command(i, s.posRef, s.pos);
+    else if (Math.abs(s.posRef - tj.ref) > 1e-6) twin.command(i, s.posRef, resync ? s.pos : undefined);
+  }
+  twin.advance(dt);
 }
 
 /* =================================================================== enlace serie / simulado */
 let link = null;
 const statusEl = document.getElementById("status");
 if (!("serial" in navigator)) document.getElementById("nosupport").style.display = "block";
-
 class SerialLink {
-  async open() {
-    this.port = await navigator.serial.requestPort();
-    await this.port.open({ baudRate: 460800, bufferSize: 65536 });
-    this.writer = this.port.writable.getWriter();
-    this.alive = true; this.loop();
-  }
-  async loop() {
-    const dec = new TextDecoder(); let buf = "";
-    while (this.alive && this.port.readable) {
-      this.reader = this.port.readable.getReader();
-      try {
-        for (;;) {
-          const { value, done } = await this.reader.read(); if (done) break;
-          buf += dec.decode(value, { stream: true });
+  async open() { this.port = await navigator.serial.requestPort(); await this.port.open({ baudRate: 460800, bufferSize: 65536 });
+    this.writer = this.port.writable.getWriter(); this.alive = true; this.loop(); }
+  async loop() { const dec = new TextDecoder(); let buf = "";
+    while (this.alive && this.port.readable) { this.reader = this.port.readable.getReader();
+      try { for (;;) { const { value, done } = await this.reader.read(); if (done) break; buf += dec.decode(value, { stream: true });
           let n; while ((n = buf.indexOf("\n")) >= 0) { const l = buf.slice(0, n).replace(/\r$/, ""); buf = buf.slice(n + 1); if (l) onLine(l); }
-          if (buf.length > 8192) buf = "";
-        }
-      } catch (e) { log("Lectura: " + e.message, "err"); } finally { this.reader.releaseLock(); }
-    }
-  }
+          if (buf.length > 8192) buf = ""; } }
+      catch (e) { log("Lectura: " + e.message, "err"); } finally { this.reader.releaseLock(); } } }
   async send(cmd) { await this.writer.write(new TextEncoder().encode(cmd + "\n")); }
-  async close() {
-    this.alive = false;
-    try { await this.send("STOP"); this.writer.releaseLock(); } catch (e) {}
-    try { if (this.reader) await this.reader.cancel(); } catch (e) {}
-    try { await this.port.close(); } catch (e) {}
-  }
+  async close() { this.alive = false; try { await this.send("STOP"); this.writer.releaseLock(); } catch (e) {}
+    try { if (this.reader) await this.reader.cancel(); } catch (e) {} try { await this.port.close(); } catch (e) {} }
 }
-
-/* ESP32 simulado: responde a los mismos comandos y emite la misma telemetría T a 100 Hz.
-   Movimiento simple (trapecio de velocidad + tolerancia + HOLD), solo para practicar la interfaz. */
+/* ESP32 simulado: otro gemelo con la planta alterada (fricción +10 %, inercia +20 %, gravedad +10 %,
+   ruido de corriente) hace de "pata real", para practicar y ver que el gemelo detecta diferencias. */
 class SimLink {
   async open() {
-    this.q = cad2enc(G.q_inicial_cad); this.w = [0, 0, 0]; this.ref = this.q.slice(); this.mode = [0, 0, 0];
-    this.state = [2, 2, 2]; this.refSet = [false, false, false]; this.t0 = performance.now();
-    this.vmax = 2.0; this.acc = 5.0; this.tol = 0.02;
+    const g = JSON.parse(JSON.stringify(GEM));
+    g.planta.ic_a = g.planta.ic_a.map(x => x * 1.1); g.planta.is_a = g.planta.is_a.map(x => x * 1.1);
+    g.planta.jeq_a_s2_rad = g.planta.jeq_a_s2_rad.map(x => x * 1.2); g.planta.factor_gravedad_planta *= 1.1;
+    const q0 = cad2enc(G.q_inicial_cad);
+    this.tw = new Gemelo.Twin(g, q0); this.pref = q0.slice(); this.refSet = [false, false, false]; this.t0 = performance.now(); this.k = 0;
     this.timer = setInterval(() => this.tick(), 10);
   }
   tick() {
-    const dt = 0.01, t = performance.now() - this.t0;
-    let line = `T,${Math.round(t)},1`;
-    for (let i = 0; i < 3; i++) {
-      if (this.mode[i] === 3) {
-        const e = this.ref[i] - this.q[i];
-        if (Math.abs(e) <= this.tol && Math.abs(this.w[i]) < 0.3) { this.w[i] = 0; this.state[i] = 2; }
-        else {
-          const vlim = Math.min(this.vmax, Math.sqrt(2 * this.acc * Math.max(Math.abs(e) - this.tol, 0)) + 0.05, 2.5 * Math.abs(e));
-          const want = Math.sign(e) * vlim;
-          this.w[i] += Math.max(-this.acc * dt, Math.min(this.acc * dt, want - this.w[i]));
-          this.state[i] = 0;
-        }
-      } else this.w[i] = 0;
-      this.q[i] += this.w[i] * dt;
-      const qn = Math.floor(this.q[i] / (2 * Math.PI / 2800)) * (2 * Math.PI / 2800);
-      const pwm = this.mode[i] === 3 ? 30 * Math.sign(this.w[i]) + 25 * this.w[i] : 0;
-      line += `,${this.mode[i]},${pwm.toFixed(2)},${(Math.abs(pwm) * 0.0015).toFixed(4)},0.0000,${qn.toFixed(5)},${this.w[i].toFixed(4)},${this.w[i].toFixed(4)},${this.ref[i].toFixed(5)},${this.state[i]},0,${this.refSet[i] ? 3 : 2}`;
-    }
+    this.tw.advance(0.01); this.k++;
+    const sn = this.tw.snapshot(), t = Math.round(performance.now() - this.t0);
+    let line = `T,${t},1`;
+    sn.forEach((s, i) => { const noise = (Math.random() - 0.5) * 0.004;
+      line += `,${s.mode},${s.duty.toFixed(2)},${Math.max(0, s.cur + noise).toFixed(4)},${Math.abs(s.curRef).toFixed(4)},${s.pos.toFixed(5)},` +
+        `${s.spd.toFixed(4)},${s.spdRef.toFixed(4)},${this.pref[i].toFixed(5)},${s.state},0,${this.refSet[i] ? 3 : 2}`; });
     onLine(line);
+    if (this.k % 30 === 0) { const i = (this.k / 30) % 3, C = GEM.control, gr = C.gravedad[i], g1 = gr.find(x => x.motor === null), g2 = gr.find(x => x.motor !== null);
+      onLine(`CFG,M${i + 1},SIM,${C.pid_kp[i]},${C.pid_ki[i]},0,${C.pwm_max_pct[i]},${C.spi_kp[i]},${C.spi_ki[i]},${C.ilimit_a[i]},${C.ppi_kp[i]},${C.ppi_ki[i]},` +
+        `${C.vmax_rad_s[i]},${C.acel_rad_s2[i]},${C.tolerancia_rad[i]},1,${C.freno_en_hold ? 1 : 0},0,${g1 ? g1.g : 0},${g1 ? g1.theta0 : 0},${C.frici_ic_a[i]},${C.frici_is_a[i]},0,0,` +
+        `${g2 ? g2.g : 0},${g2 ? g2.theta0 : 0},${g2 ? g2.motor + 1 : 0},${g2 ? g2.c : 0},${C.fricb_inicio[i]},${C.fricb_rampa_s[i] * 1000},${C.dither_pct[i]},${C.dither_hz[i]}`); }
   }
-  async send(cmd) {
-    setTimeout(() => this.reply(cmd), 5);
-  }
+  async send(cmd) { setTimeout(() => this.reply(cmd), 3); }
   reply(cmd) {
     const f = cmd.split(",");
-    if (cmd === "STOP") { this.mode = [0, 0, 0]; return onLine("ACK,STOP,0.000,0"); }
+    if (cmd === "STOP") { [0, 1, 2].forEach(i => this.tw.release(i, this.tw.J[i].theta)); return onLine("ACK,STOP,0.000,0"); }
     if (f[0] === "TEL") return onLine("ACK,TEL,MULTI");
     if (f[0] === "INFO") return onLine("INFO,BOARD,pata_SIMULADA,TEL,MULTI");
     const m = /^M([123])$/.exec(f[0]); if (!m) return onLine("ERR,UNKNOWN");
-    const i = +m[1] - 1, p = `M${i + 1},`;
-    if (f[1] === "PREF") { this.ref[i] = parseFloat(f[2]); this.refSet[i] = true; this.state[i] = 0; return onLine(p + `ACK,PREF,${this.ref[i].toFixed(6)}`); }
+    const i = +m[1] - 1, p = `M${i + 1},`, tj = this.tw.J[i];
+    if (f[1] === "PREF") { this.pref[i] = parseFloat(f[2]); this.refSet[i] = true;
+      if (tj.mode === 3) this.tw.command(i, this.pref[i]); return onLine(p + `ACK,PREF,${this.pref[i].toFixed(6)}`); }
     if (f[1] === "MODE" && f[2] === "POSITION") {
-      if (this.mode[i] === 3) return onLine(p + "ERR,MODE,STOP_before_leaving_or_restarting_POSITION");
+      if (tj.mode === 3) return onLine(p + "ERR,MODE,STOP_before_leaving_or_restarting_POSITION");
       if (!this.refSet[i]) return onLine(p + "ERR,POSITION,set_PREF_after_encoder_zero");
-      this.mode[i] = 3; return onLine(p + "ACK,MODE,POSITION,CW");
-    }
-    if (f[1] === "STOP") { this.mode[i] = 0; return onLine(p + "ACK,STOP"); }
+      this.tw.command(i, this.pref[i]); return onLine(p + "ACK,MODE,POSITION,CW"); }
+    if (f[1] === "STOP") { this.tw.release(i, tj.theta); return onLine(p + "ACK,STOP"); }
     onLine(p + "ACK," + f.slice(1).join(","));
   }
   async close() { clearInterval(this.timer); }
 }
-
 async function connect(sim) {
-  if (link) { finishStep("Desconectado"); await link.close(); link = null; last = null; setConnUi(); return; }
+  if (link) { await link.close(); link = null; setConnUi(); return; }
   try { link = sim ? new SimLink() : new SerialLink(); await link.open(); }
   catch (e) { link = null; log("No se pudo abrir el puerto: " + e.message, "err"); return; }
-  link.sim = sim; setConnUi();
+  link.sim = sim; twin = null; store.clear(); trail.length = trailTwin.length = 0; setConnUi();
   setTimeout(() => { send("TEL,MULTI"); send("INFO"); }, 300);
 }
 function setConnUi() {
   document.getElementById("connect").textContent = link && !link.sim ? "Desconectar" : "Conectar a la pata";
   document.getElementById("simBtn").textContent = link && link.sim ? "Salir del modo simulado" : "Modo simulado";
-  document.getElementById("connect").disabled = !!(link && link.sim);
-  document.getElementById("simBtn").disabled = !!(link && !link.sim);
+  document.getElementById("connect").disabled = !!(link && link.sim); document.getElementById("simBtn").disabled = !!(link && !link.sim);
   statusEl.textContent = link ? (link.sim ? "ESP32 simulado" : "Conectado, esperando telemetría…") : "Desconectado";
 }
-async function send(cmd) {
-  if (!link) { log("no conectado: " + cmd, "err"); return; }
-  log("> " + cmd, "muted"); await link.send(cmd);
-}
+async function send(cmd) { if (!link) { log("no conectado: " + cmd, "err"); return; } log("> " + cmd, "muted"); await link.send(cmd); }
 const replies = [];
-function waitReply(re, ms = 800) {
-  return new Promise(res => { const h = { re, res }; replies.push(h); setTimeout(() => { const k = replies.indexOf(h); if (k >= 0) { replies.splice(k, 1); res(null); } }, ms); });
-}
+function waitReply(re, ms = 800) { return new Promise(res => { const h = { re, res }; replies.push(h);
+  setTimeout(() => { const k = replies.indexOf(h); if (k >= 0) { replies.splice(k, 1); res(null); } }, ms); }); }
 
 /* =================================================================== recepción */
 let lastRx = 0;
 function onLine(line) {
   lastRx = performance.now();
   if (line.startsWith("T,")) return onT(line);
-  if (line.startsWith("CFG,") || line.startsWith("MHEADER,")) return;
+  if (line.startsWith("CFG,")) return applyCfgLine(line);
+  if (line.startsWith("MHEADER,")) return;
   if (line.startsWith("DATA,") || line.startsWith("SPEED,") || line.startsWith("POSITION,")) {
-    if (!onLine.asked || performance.now() - onLine.asked > 2000) { onLine.asked = performance.now(); send("TEL,MULTI"); }
-    return;
-  }
+    if (!onLine.asked || performance.now() - onLine.asked > 2000) { onLine.asked = performance.now(); send("TEL,MULTI"); } return; }
   for (let k = replies.length - 1; k >= 0; k--) if (replies[k].re.test(line)) { replies[k].res(line); replies.splice(k, 1); }
   log(line, /(^|,)ERR,/.test(line) ? "err" : /(^|,)ACK,/.test(line) ? "ack" : "");
 }
+const torqueOf = (cur, duty) => Math.abs(duty) >= 25 ? GEM.kt_nm_a * cur / (Math.abs(duty) / 100) * Math.sign(duty) : NaN;
 function onT(line) {
-  const f = line.split(",");
-  if (f.length < 3 + 3 * FIELDS_PER_MOTOR) return;
-  const t = parseInt(f[1], 10) / 1000;
-  const m = [];
+  const f = line.split(","); if (f.length < 3 + 3 * FIELDS_PER_MOTOR) return;
+  const t = parseInt(f[1], 10) / 1000, m = [];
+  for (let i = 0; i < 3; i++) { const b = 3 + i * FIELDS_PER_MOTOR, n = (k) => parseFloat(f[b + k]);
+    m.push({ mode: n(0) | 0, duty: n(1), cur: n(2), curRef: n(3), pos: n(4), spd: n(5), spdRef: n(6), posRef: n(7), state: n(8) | 0, flags: n(10) | 0 }); }
+  if (last && t < last.t - 0.5) { trail.length = trailTwin.length = 0; store.clear(); twin = null; log("ESP32 reiniciado", "err"); }
+  syncTwin(m, t);
+  const sn = twin.snapshot();
+  const qe = m.map(s => s.pos), qc = enc2cad(qe), foot = fk(qc);
+  const qtw = enc2cad(sn.map(s => s.theta)), footTw = fk(qtw);
+  const allPos = m.every(s => s.mode === 3), qRefC = enc2cad(m.map(s => s.posRef)), refFoot = fk(qRefC);
+  const goal = target || (allPos ? refFoot : null), err = goal ? norm(sub(foot, goal)) : NaN, errTw = norm(sub(foot, footTw));
+  last = { t, m, sn, qe, qc, foot, qtw, footTw, qRefC, refFoot, allPos, goal, err, errTw, raw: f };
+  trail.push([t, foot]); trailTwin.push([t, footTw]);
+  while (trail.length && trail[0][0] < t - 5) trail.shift(); while (trailTwin.length && trailTwin[0][0] < t - 5) trailTwin.shift();
+  // series para las gráficas
+  const v = { e_ref: err, e_tw: errTw };
   for (let i = 0; i < 3; i++) {
-    const b = 3 + i * FIELDS_PER_MOTOR, n = (k) => parseFloat(f[b + k]);
-    m.push({ mode: n(0) | 0, duty: n(1), cur: n(2), curRef: n(3), pos: n(4), spd: n(5), spdRef: n(6),
-             posRef: n(7), state: n(8) | 0, flags: n(10) | 0 });
+    const s = m[i], w = sn[i], sg = (s.duty < 0 ? -1 : 1);
+    v[`q${i}`] = qc[i] * DEG; v[`qt${i}`] = qtw[i] * DEG; v[`qr${i}`] = s.mode === 3 ? qRefC[i] * DEG : NaN;
+    v[`w${i}`] = MAP.signo[i] * s.spd; v[`wt${i}`] = MAP.signo[i] * w.omega; v[`wr${i}`] = s.mode === 3 ? MAP.signo[i] * s.spdRef : NaN;
+    v[`i${i}`] = sg * s.cur; v[`it${i}`] = (w.duty < 0 ? -1 : 1) * w.cur; v[`ir${i}`] = s.mode === 3 ? sg * Math.abs(s.curRef) : NaN;
+    v[`u${i}`] = s.duty; v[`ut${i}`] = w.duty;
+    v[`tau${i}`] = torqueOf(s.cur, s.duty); v[`taut${i}`] = torqueOf(w.cur, w.duty);
   }
-  if (last && t < last.t - 0.5) { trail.length = 0; finishStep("Conexión reiniciada"); log("ESP32 reiniciado", "err"); }
-  const qe = m.map(s => s.pos), qc = enc2cad(qe);
-  const foot = fk(qc);
-  const allPos = m.every(s => s.mode === 3);
-  const qRefC = enc2cad(m.map(s => s.posRef));
-  const refFoot = fk(qRefC);
-  const goal = target || (allPos ? refFoot : null);
-  const err = goal ? norm(sub(foot, goal)) : NaN;
-  last = { t, m, qe, qc, foot, qRefC, refFoot, allPos, goal, err, raw: f };
-  trail.push([t, foot]); while (trail.length && trail[0][0] < t - 5) trail.shift();
-  sampleStep(foot);
+  store.push(t, v);
   if (recording) recordRow();
   if (seq.running) seqTick();
   dirty = true;
@@ -417,50 +403,39 @@ function onT(line) {
 const CSV_HEAD = ["time_ms", "selected"];
 for (let k = 1; k <= 3; k++) CSV_HEAD.push(...["mode", "duty_percent", "current_a", "current_ref_a", "position_rad", "speed_rad_s",
   "speed_ref_rad_s", "position_ref_rad", "position_state", "current_status", "flags"].map(s => `m${k}_${s}`));
-CSV_HEAD.push("target_x_mm", "target_y_mm", "target_z_mm", "foot_x_mm", "foot_y_mm", "foot_z_mm", "foot_error_mm", "seq_index");
-function startRec() { recording = { rows: [CSV_HEAD.join(",")], t0: performance.now() }; updRec(); }
+for (let k = 1; k <= 3; k++) CSV_HEAD.push(...["position_rad", "speed_rad_s", "current_a", "duty_percent", "state"].map(s => `tw${k}_${s}`));
+CSV_HEAD.push("target_x_mm", "target_y_mm", "target_z_mm", "foot_x_mm", "foot_y_mm", "foot_z_mm", "twin_foot_x_mm", "twin_foot_y_mm",
+  "twin_foot_z_mm", "foot_error_mm", "foot_twin_error_mm", "seq_index", "q_sign", "q_offset");
+function startRec() { recording = { rows: [CSV_HEAD.join(",")] }; updRec(); }
 function recordRow() {
   const L = last, g = L.goal || [NaN, NaN, NaN];
-  recording.rows.push([...L.raw.slice(1), ...g.map(x => x.toFixed(3)), ...L.foot.map(x => x.toFixed(3)),
-                       isFinite(L.err) ? L.err.toFixed(3) : "", seq.running ? seq.k : ""].join(","));
+  const tw = L.sn.flatMap(s => [s.theta.toFixed(5), s.omega.toFixed(4), s.cur.toFixed(4), s.duty.toFixed(2), s.state]);
+  recording.rows.push([...L.raw.slice(1), ...tw, ...g.map(x => x.toFixed(3)), ...L.foot.map(x => x.toFixed(3)), ...L.footTw.map(x => x.toFixed(3)),
+    isFinite(L.err) ? L.err.toFixed(3) : "", L.errTw.toFixed(3), seq.running ? seq.k : "", MAP.signo.join(" "), MAP.offset.map(x => x.toFixed(5)).join(" ")].join(","));
 }
 function stopRec(name) {
   if (!recording) return;
-  const blob = new Blob([recording.rows.join("\n") + "\n"], { type: "text/csv" });
-  const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
-  a.download = name || `pata1_ik_${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.csv`;
-  a.click(); log(`CSV guardado: ${a.download} (${recording.rows.length - 1} filas)`, "ack");
-  recording = null; updRec();
+  download(new Blob([recording.rows.join("\n") + "\n"], { type: "text/csv" }),
+           name || `pata1_gemelo_${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.csv`);
+  log(`CSV guardado (${recording.rows.length - 1} filas)`, "ack"); recording = null; updRec();
 }
-function updRec() {
-  document.getElementById("recBtn").textContent = recording ? "Detener y guardar" : "Grabar CSV";
-  document.getElementById("recInfo").textContent = recording ? "grabando…" : "";
-}
+function download(blob, name) { const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; a.click(); }
+function updRec() { document.getElementById("recBtn").textContent = recording ? "Detener y guardar" : "Grabar CSV";
+  document.getElementById("recInfo").textContent = recording ? "grabando…" : ""; }
 
 /* =================================================================== mandar objetivos */
-async function sendJointTargets(qCad, why, stepGoal) {
+async function sendJointTargets(qCad, why, ask = true) {
   if (!last) { log("Sin telemetría: conecta primero", "err"); return false; }
   const qe = cad2enc(qCad);
   if (!withinEnc(qe)) { log("Objetivo fuera de los límites articulares; no se envía", "err"); return false; }
   const jump = Math.max(...qe.map((x, i) => Math.abs(x - last.qe[i])));
-  if (jump > 1.2 && !seq.running && !confirm(`Una articulación tiene que girar ${jump.toFixed(2)} rad. ¿Enviar igual?`)) return false;
-  for (let i = 0; i < 3; i++) {
-    const md = last.m[i].mode;
-    if (md !== 0 && md !== 3) { log(`M${i + 1} está en modo ${MODE_TXT[md] || md}: pásala a STOP desde el dashboard de la pata`, "err"); return false; }
-  }
-  if (stepGoal) startStep(last.foot, stepGoal);
-  else finishStep("Secuencia iniciada");
+  if (ask && jump > 1.2 && !seq.running && !confirm(`Una articulación tiene que girar ${jump.toFixed(2)} rad. ¿Enviar igual?`)) return false;
+  for (let i = 0; i < 3; i++) { const md = last.m[i].mode;
+    if (md !== 0 && md !== 3) { log(`M${i + 1} está en modo ${MODE_TXT[md] || md}: pásala a STOP`, "err"); return false; } }
   for (let i = 0; i < 3; i++) {
     send(`M${i + 1},PREF,${qe[i].toFixed(5)}`);
-    if (last.m[i].mode !== 3) {
-      const r = waitReply(new RegExp(`^M${i + 1},(ACK,MODE|ERR)`), 800);
-      send(`M${i + 1},MODE,POSITION`);
-      const ans = await r;
-      if (!ans || ans.includes("ERR")) {
-        if (stepGoal) finishStep("Envío incompleto");
-        log(`M${i + 1} no entró en posición (${ans || "sin respuesta"})`, "err"); return false;
-      }
-    }
+    if (last.m[i].mode !== 3) { const r = waitReply(new RegExp(`^M${i + 1},(ACK,MODE|ERR)`), 800); send(`M${i + 1},MODE,POSITION`);
+      const ans = await r; if (!ans || ans.includes("ERR")) { log(`M${i + 1} no entró en posición (${ans || "sin respuesta"})`, "err"); return false; } }
   }
   if (why) log(why, "muted");
   return true;
@@ -469,86 +444,74 @@ async function sendJointTargets(qCad, why, stepGoal) {
 /* =================================================================== UI: IK */
 const tIn = ["tx", "ty", "tz"].map(id => document.getElementById(id));
 function setTargetInputs(p) { tIn.forEach((el, i) => el.value = p[i].toFixed(1)); updPreview(); }
-function getTargetInputs() { return tIn.map(el => parseFloat(el.value)); }
+const getTargetInputs = () => tIn.map(el => parseFloat(el.value));
+/* la vista previa (violeta) solo se muestra mientras el objetivo escrito no se ha enviado */
+const previewPending = () => !target || norm(sub(getTargetInputs(), target)) > 0.05;
 function updPreview() {
-  const p = getTargetInputs(); const info = document.getElementById("ikInfo");
+  const p = getTargetInputs(), info = document.getElementById("ikInfo");
   if (p.some(x => !isFinite(x))) { preview = null; info.textContent = ""; return; }
-  const s = ikBest(p, last ? last.qc : null);
-  preview = s.status === "ok" ? s.q : null;
+  const s = ikBest(p, last ? last.qc : null); preview = s.status === "ok" ? s.q : null;
   if (s.status !== "ok") { info.innerHTML = `<span class="err">Sin solución: ${s.status}</span>`; dirty = true; return; }
-  const qe = cad2enc(s.q), rel = relKnee(s.q) * 180 / Math.PI;
-  info.innerHTML = `q CAD = [${s.q.map(x => (x * 180 / Math.PI).toFixed(1)).join(", ")}]° · q enc = [${qe.map(x => x.toFixed(3)).join(", ")}] rad<br>` +
-    `rama codo ${s.branch > 0 ? "+" : "−"}, coxa ${s.coxa > 0 ? "delante" : "detrás"} · ángulo fémur–tibia ${rel.toFixed(1)}°` +
-    (Math.abs(Math.sin(rel * Math.PI / 180)) < 0.1 ? ` <b class="err">cerca de la singularidad (pata estirada)</b>` : "");
+  const qe = cad2enc(s.q), rel = relKnee(s.q) * DEG;
+  info.innerHTML = `q = [${s.q.map(x => (x * DEG).toFixed(1)).join(", ")}]° · q enc = [${qe.map(x => x.toFixed(3)).join(", ")}] rad<br>` +
+    `codo ${s.branch > 0 ? "+" : "−"} · coxa ${s.coxa > 0 ? "delante" : "detrás"} · fémur–tibia ${rel.toFixed(1)}°` +
+    (Math.abs(Math.sin(rel / DEG)) < 0.1 ? ` <b class="err">cerca de la singularidad (pata estirada)</b>` : "");
   dirty = true;
 }
 tIn.forEach(el => el.addEventListener("input", updPreview));
 document.querySelectorAll("button[data-d]").forEach(b => b.onclick = () => {
-  const [ax, d] = b.dataset.d.split(",").map(Number);
-  const p = getTargetInputs().map((x, i) => isFinite(x) ? x : fk(G.q_central_cad)[i]);
-  setTargetInputs(add(p, scl(G.ejes_locales[ax], d)));
-});
+  const [ax, d] = b.dataset.d.split(",").map(Number), p = getTargetInputs(); p[ax] += d; setTargetInputs(p); });
+document.getElementById("toHome").onclick = () => setTargetInputs(fk(G.q_inicial_cad));
 document.getElementById("toCenter").onclick = () => setTargetInputs(fk(G.q_central_cad));
 document.getElementById("fromReal").onclick = () => { if (last) setTargetInputs(last.foot); };
-document.getElementById("send").onclick = async event => {
-  updPreview(); if (!preview || seq.running) return;
-  const goal = getTargetInputs(), button = event.currentTarget;
-  button.disabled = true;
-  try {
-    if (await sendJointTargets(preview, "Objetivo enviado", goal)) target = goal;
-  } finally {
-    button.disabled = false;
-  }
+document.getElementById("send").onclick = async () => { updPreview(); if (!preview) return;
+  if (await sendJointTargets(preview, "Objetivo enviado")) target = getTargetInputs(); };
+document.getElementById("homeBtn").onclick = async () => {
+  if (!last) return log("Sin telemetría: conecta primero", "err");
+  if (!confirm("¿Mandar las tres articulaciones a 0 (pata estirada)?")) return;
+  if (await sendJointTargets(G.q_inicial_cad, "Home enviado", false)) { target = fk(G.q_inicial_cad); setTargetInputs(target); }
 };
 
 /* =================================================================== secuencias */
 const seq = { running: false, pts: [], k: 0, since: 0, arrived: 0 };
 function buildSeq(kind, n) {
-  const c = fk(G.q_central_cad), E = G.ejes_locales;
-  const at = (d) => add(add(add(c, scl(E[0], d[0])), scl(E[1], d[1])), scl(E[2], d[2]));
+  const c = fk(G.q_central_cad), E = G.ejes_locales, at = (d) => add(add(add(c, scl(E[0], d[0])), scl(E[1], d[1])), scl(E[2], d[2]));
   if (kind === "p2p") return G.secuencia_mm.map(at);
   if (kind === "circ") { const r = G.circulo.radio_mm; return Array.from({ length: n + 1 }, (_, k) => at([r * Math.cos(2 * Math.PI * k / n), 0, r * Math.sin(2 * Math.PI * k / n)])); }
-  const L = G.ciclo_paso.largo_paso_mm, H = G.ciclo_paso.altura_mm, pts = [];
-  const ns = Math.max(2, Math.round(n / 2)), nw = Math.max(2, n - ns);
-  for (let k = 0; k <= ns; k++) pts.push(at([L / 2 - L * k / ns, 0, 0]));           // apoyo
+  const L = G.ciclo_paso.largo_paso_mm, H = G.ciclo_paso.altura_mm, pts = [], ns = Math.max(2, Math.round(n / 2)), nw = Math.max(2, n - ns);
+  for (let k = 0; k <= ns; k++) pts.push(at([L / 2 - L * k / ns, 0, 0]));
   for (let k = 1; k <= nw; k++) { const s = k / nw; pts.push(at([-L / 2 + L * (s - Math.sin(2 * Math.PI * s) / (2 * Math.PI)), 0, H * 0.5 * (1 - Math.cos(2 * Math.PI * s))])); }
   return pts;
 }
 async function seqStart() {
   if (!last) return log("Sin telemetría: conecta primero", "err");
   const pts = buildSeq(document.getElementById("seq").value, +document.getElementById("seqN").value);
-  for (const [k, p] of pts.entries()) { const s = ikBest(p); if (s.status !== "ok") return log(`Punto ${k} sin solución (${s.status}); secuencia cancelada`, "err"); }
+  for (const [k, p] of pts.entries()) { const s = ikBest(p); if (s.status !== "ok") return log(`Punto ${k} sin solución (${s.status})`, "err"); }
   Object.assign(seq, { running: true, pts, k: -1, since: 0, arrived: 0, errs: [] });
   if (document.getElementById("seqRec").checked && !recording) startRec();
   await seqNext();
 }
 async function seqNext() {
-  seq.k++;
-  if (seq.k >= seq.pts.length) return seqEnd("Secuencia terminada");
-  const p = seq.pts[seq.k], s = ikBest(p, last.qc);
-  target = p; setTargetInputs(p);
+  seq.k++; if (seq.k >= seq.pts.length) return seqEnd("Secuencia terminada");
+  const p = seq.pts[seq.k], s = ikBest(p, last.qc); target = p; setTargetInputs(p);
   if (!(await sendJointTargets(s.q))) return seqEnd("Secuencia detenida: no se pudo enviar");
   seq.since = performance.now(); seq.arrived = 0;
   document.getElementById("seqInfo").textContent = `Punto ${seq.k + 1} de ${seq.pts.length}…`;
 }
 function seqTick() {
   if (seq.k < 0 || !seq.since) return;
-  const L = last, now = performance.now();
-  const held = L.m.every(s => s.mode === 3 && (s.state === 2 || s.state === 3));
+  const now = performance.now(), held = last.m.every(s => s.mode === 3 && (s.state === 2 || s.state === 3));
   if (held && !seq.arrived) seq.arrived = now;
-  const dwell = +document.getElementById("seqDwell").value * 1000;
-  const timeout = now - seq.since > 8000;
+  const dwell = +document.getElementById("seqDwell").value * 1000, timeout = now - seq.since > 8000;
   if ((seq.arrived && now - seq.arrived >= dwell) || timeout) {
-    seq.errs.push({ k: seq.k, err: L.err, timeout });
-    if (timeout) log(`Punto ${seq.k + 1}: no llegó en 8 s (error ${L.err.toFixed(1)} mm)`, "err");
-    seq.since = 0; seqNext();
-  }
+    seq.errs.push({ err: last.err, errTw: last.errTw, timeout });
+    if (timeout) log(`Punto ${seq.k + 1}: no llegó en 8 s (error ${last.err.toFixed(1)} mm)`, "err");
+    seq.since = 0; seqNext(); }
 }
 function seqEnd(msg) {
-  seq.running = false;
-  const e = (seq.errs || []).map(x => x.err).filter(isFinite);
-  const rmse = e.length ? Math.sqrt(e.reduce((a, b) => a + b * b, 0) / e.length) : NaN;
-  const txt = `${msg}. Error al llegar a cada punto: RMSE ${rmse.toFixed(2)} mm, máx. ${e.length ? Math.max(...e).toFixed(2) : "—"} mm (${e.length} puntos).`;
+  seq.running = false; const e = (seq.errs || []).map(x => x.err).filter(isFinite), et = (seq.errs || []).map(x => x.errTw).filter(isFinite);
+  const rms = (a) => a.length ? Math.sqrt(a.reduce((s, x) => s + x * x, 0) / a.length) : NaN;
+  const txt = `${msg}. Error al llegar: RMSE ${rms(e).toFixed(2)} mm, máx. ${e.length ? Math.max(...e).toFixed(2) : "—"} mm · real–gemelo RMSE ${rms(et).toFixed(2)} mm (${e.length} puntos).`;
   document.getElementById("seqInfo").textContent = txt; log(txt, "ack");
   if (recording && document.getElementById("seqRec").checked) stopRec(`pata1_secuencia_${document.getElementById("seq").value}.csv`);
 }
@@ -557,182 +520,175 @@ document.getElementById("seqStop").onclick = () => { if (seq.running) seqEnd("Se
 
 /* =================================================================== mapeo */
 function drawMapTable() {
-  const tb = document.getElementById("mapTbl");
-  tb.querySelectorAll("tr.r").forEach(r => r.remove());
-  JN.forEach((n, i) => {
-    const tr = document.createElement("tr"); tr.className = "r";
+  const tb = document.getElementById("mapTbl"); tb.querySelectorAll("tr.r").forEach(r => r.remove());
+  JN.forEach((n, i) => { const tr = document.createElement("tr"); tr.className = "r";
     tr.innerHTML = `<td>${n}</td><td><select data-i="${i}" class="sg"><option value="1">+1</option><option value="-1">−1</option></select></td>` +
-                   `<td><input type="number" step="0.01" data-i="${i}" class="of" value="${MAP.offset[i].toFixed(4)}"></td>`;
-    tb.appendChild(tr); tr.querySelector(".sg").value = String(MAP.signo[i]);
-  });
+      `<td><input type="number" step="0.01" data-i="${i}" class="of" value="${MAP.offset[i].toFixed(4)}"></td>`;
+    tb.appendChild(tr); tr.querySelector(".sg").value = String(MAP.signo[i]); });
   tb.querySelectorAll(".sg").forEach(el => el.onchange = () => { MAP.signo[+el.dataset.i] = +el.value; saveMap(); });
   tb.querySelectorAll(".of").forEach(el => el.onchange = () => { MAP.offset[+el.dataset.i] = +el.value; saveMap(); });
 }
-function saveMap() { localStorage.setItem("pata1_map", JSON.stringify({ signo: MAP.signo })); log(`Mapeo: signo [${MAP.signo}] · offset [${MAP.offset.map(x => x.toFixed(4))}]`, "ack"); updPreview(); dirty = true; }
-document.getElementById("zeroCad").onclick = () => {
-  if (!last) return log("Sin telemetría", "err");
-  if (!confirm("¿La pata está físicamente en la pose cero del CAD (fémur horizontal, tibia alineada con la pose del modelo)?")) return;
-  MAP.offset = last.qe.map((x, i) => -MAP.signo[i] * x); saveMap(); drawMapTable();
-};
-document.getElementById("mapReset").onclick = () => { MAP.offset = [0, 0, 0]; saveMap(); drawMapTable(); };
+function saveMap() { localStorage.setItem("pata1_map_v2", JSON.stringify(MAP)); log(`Mapeo: signo [${MAP.signo}] · offset [${MAP.offset.map(x => x.toFixed(4))}]`, "ack"); updPreview(); dirty = true; }
+document.getElementById("zeroCad").onclick = () => { if (!last) return log("Sin telemetría", "err");
+  if (!confirm("¿La pata está estirada en la pose cero del CAD?")) return; MAP.offset = last.qe.map((x, i) => -MAP.signo[i] * x); saveMap(); drawMapTable(); };
+document.getElementById("mapReset").onclick = () => { MAP = { signo: G.signo.slice(), offset: G.offset.slice() }; saveMap(); drawMapTable(); };
 drawMapTable();
 
 /* =================================================================== botones generales */
 document.getElementById("connect").onclick = () => connect(false);
 document.getElementById("simBtn").onclick = () => connect(true);
-async function emergency() { finishStep("Detenido por STOP"); if (seq.running) seqEnd("Secuencia detenida por STOP"); if (link) await send("STOP"); target = null; }
+async function emergency() { if (seq.running) seqEnd("Secuencia detenida por STOP"); if (link) await send("STOP"); target = null; }
 document.getElementById("stop").onclick = emergency;
 window.addEventListener("keydown", e => { if (e.key === "Escape") emergency(); });
 document.getElementById("recBtn").onclick = () => recording ? stopRec() : startRec();
-setTargetInputs(fk(G.q_inicial_cad));
 
-/* =================================================================== vista 3D (canvas, ortográfica, z hacia arriba) */
-const cv = document.getElementById("view"), ctx = cv.getContext("2d");
-const cam = { yaw: -0.9, pitch: 0.45, zoom: 1.4, center: [0, 0, 0] };
-(function initCenter() { const W = G.workspace_mm; const lo = [1e9, 1e9, 1e9], hi = [-1e9, -1e9, -1e9];
-  for (const p of W.concat([G.p0])) for (let i = 0; i < 3; i++) { lo[i] = Math.min(lo[i], p[i]); hi[i] = Math.max(hi[i], p[i]); }
-  cam.center = scl(add(lo, hi), 0.5); cam.span = Math.max(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]); })();
-function setView(y, p, schematic = false) {
-  cam.yaw = y; cam.pitch = p; cam.zoom = 1.4; cam.schematic = schematic; dirty = true;
+/* =================================================================== vista 3D */
+const V = new Visor3D.Visor(document.getElementById("gl"), document.getElementById("ov"));
+V.onchange = () => { dirty = true; };
+const MESH_OK = !!window.MALLAS;
+if (MESH_OK) for (const k of ["base", "coxa", "femur", "tibia"]) if (MALLAS[k]) V.setMesh(k, MALLAS[k].v, MALLAS[k].f);
+const LINKS = ["coxa", "femur", "tibia"], PIV0 = [G.p0, G.p1, G.p2];
+const COL = { base: [0.80, 0.80, 0.78], coxa: [0.55, 0.62, 0.70], femur: [0.45, 0.62, 0.86], tibia: [0.55, 0.62, 0.70] };
+const homeFoot = fk(G.q_inicial_cad), zGround = homeFoot[2] - (G.radio_pie || 0);
+(function grid() {             // rejilla del plano del pie en home (con profundidad, queda detrás de la pata)
+  const P = [], h = 260, s = 20;
+  for (let x = -80; x <= 300; x += s) P.push(x, -h / 2, zGround, x, h / 2, zGround);
+  for (let y = -h / 2; y <= h / 2; y += s) P.push(-80, y, zGround, 300, y, zGround);
+  V.setLines("grid", P);
+})();
+V.cam.target = [100, 0, -10]; V.cam.dist = 430; V.home = JSON.parse(JSON.stringify(V.cam));
+const VIEWS = { iso: [-2.3, 0.42], top: [-Math.PI / 2, 1.5], side: [-Math.PI / 2, 0.02], front: [Math.PI, 0.05] };
+document.querySelectorAll("button[data-view]").forEach(b => b.onclick = () => V.setView(...VIEWS[b.dataset.view]));
+function linkMats(q) {
+  const fr = frames(q);
+  return LINKS.map((_, k) => { const R = fr.R[k], piv = fr.pts[k], t = sub(piv, mv(R, PIV0[k])); return Visor3D.M4.fromRT(R, t); });
 }
-document.getElementById("viewTop").onclick = () => {
-  const [x, y] = sub(fk(G.q_inicial_cad), G.p0);
-  setView(-Math.PI / 2 - Math.atan2(y, x), Math.PI / 2, true);
-};
-document.getElementById("viewSide").onclick = () => setView(Math.atan2(G.ejes_locales[1][1], G.ejes_locales[1][0]) + Math.PI / 2, 0);
-document.getElementById("viewIso").onclick = () => setView(-0.9, 0.45);
-let drag = null;
-cv.addEventListener("mousedown", e => drag = [e.clientX, e.clientY, cam.yaw, cam.pitch]);
-window.addEventListener("mouseup", () => drag = null);
-window.addEventListener("mousemove", e => { if (!drag) return; cam.yaw = drag[2] - (e.clientX - drag[0]) * 0.008;
-  cam.pitch = Math.max(-1.5, Math.min(1.5, drag[3] + (e.clientY - drag[1]) * 0.008)); cam.schematic = false; dirty = true; });
-cv.addEventListener("wheel", e => { e.preventDefault(); cam.zoom *= Math.exp(-e.deltaY * 0.001); dirty = true; }, { passive: false });
-cv.addEventListener("dblclick", () => setView(-0.9, 0.45));
-function proj(p) {
-  const d = sub(p, cam.center), cy = Math.cos(cam.yaw), sy = Math.sin(cam.yaw), cp = Math.cos(cam.pitch), sp = Math.sin(cam.pitch);
-  const x = cy * d[0] - sy * d[1], y1 = sy * d[0] + cy * d[1];
-  const yv = cp * d[2] - sp * y1, depth = sp * d[2] + cp * y1;
-  const s = cam.scale; return [cv.width / 2 + s * x, cv.height / 2 - s * yv, depth];
-}
-function line3(pts, color, w, dash = []) {
-  ctx.strokeStyle = color; ctx.lineWidth = w; ctx.setLineDash(dash); ctx.beginPath();
-  pts.forEach((p, k) => { const q = proj(p); k ? ctx.lineTo(q[0], q[1]) : ctx.moveTo(q[0], q[1]); }); ctx.stroke(); ctx.setLineDash([]);
-}
-function dot3(p, color, r) { const q = proj(p); ctx.fillStyle = color; ctx.beginPath(); ctx.arc(q[0], q[1], r, 0, 2 * Math.PI); ctx.fill(); }
-function text3(p, t, color = "#52514e", dx = 6, dy = -6) { const q = proj(p); ctx.fillStyle = color; ctx.fillText(t, q[0] + dx, q[1] + dy); }
-function legViewPoints(q) {
-  const P = points(q);
-  if (!cam.schematic) return P;
-  const [x, y] = sub(P[3], P[0]);
-  const axis = [x, y, 0], length2 = dot(axis, axis);
-  if (length2 < 1e-9) return P;
-  return P.map(p => add(P[0], scl(axis, dot(sub(p, P[0]), axis) / length2)));
-}
-function drawLeg(q, color, w, dash, alpha = 1) {
-  const P = legViewPoints(q); ctx.globalAlpha = alpha; line3(P, color, w, dash);
-  P.forEach((p, k) => dot3(p, color, k === 3 ? w * 0.9 : w * 0.75)); ctx.globalAlpha = 1;
-}
+function drawSkeleton(q, color, w, dash) { const P = points(q); V.line(P, color, w, dash); P.forEach((p, k) => V.dot(p, color, k === 3 ? 4 : 3)); }
 function render() {
-  const r = cv.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
-  if (cv.width !== Math.round(r.width * dpr) || cv.height !== Math.round(r.height * dpr)) { cv.width = Math.round(r.width * dpr); cv.height = Math.round(r.height * dpr); dirty = true; }
-  if (!dirty) return requestAnimationFrame(render);
-  dirty = false;
-  cam.scale = cam.zoom * 0.8 * Math.min(cv.width, cv.height) / cam.span;
-  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, cv.width, cv.height);
-  ctx.font = `${12 * dpr}px system-ui, Segoe UI, sans-serif`;
-  // suelo: plano a la altura del pie en la postura central
-  const zg = fk(G.q_central_cad)[2], c = cam.center, h = cam.span * 0.7, stp = 20;
-  ctx.globalAlpha = 0.9;
-  for (let x = Math.floor((c[0] - h) / stp) * stp; x <= c[0] + h; x += stp) line3([[x, c[1] - h, zg], [x, c[1] + h, zg]], "#ecebe6", 1);
-  for (let y = Math.floor((c[1] - h) / stp) * stp; y <= c[1] + h; y += stp) line3([[c[0] - h, y, zg], [c[0] + h, y, zg]], "#ecebe6", 1);
-  ctx.globalAlpha = 1;
-  text3([c[0] + h, c[1] - h, zg], "suelo (postura central)", "#898781", -150, 14);
-  // ejes del marco raíz
-  const o = add(G.p0, [-40, 0, 0]);
-  line3([o, add(o, [25, 0, 0])], "#d03b3b", 2); text3(add(o, [25, 0, 0]), "x", "#d03b3b");
-  line3([o, add(o, [0, 25, 0])], "#0ca30c", 2); text3(add(o, [0, 25, 0]), "y", "#0ca30c");
-  line3([o, add(o, [0, 0, 25])], "#2a78d6", 2); text3(add(o, [0, 0, 25]), "z", "#2a78d6");
-  // eje de la coxa
-  line3([add(G.p0, [0, 0, -30]), add(G.p0, [0, 0, 40])], "#c3c2b7", 1, [4, 4]);
-  if (document.getElementById("showWs").checked) {
-    ctx.fillStyle = "rgba(42,120,214,0.10)";
-    for (const p of G.workspace_mm) { const q = proj(p); ctx.fillRect(q[0] - 1.5, q[1] - 1.5, 3, 3); }
+  if (dirty) {
+    dirty = false;
+    const showMesh = document.getElementById("showMesh").checked && MESH_OK, showTwin = document.getElementById("showTwin").checked;
+    const qReal = last ? last.qc : G.q_inicial_cad, list = [{ mesh: "grid", col: [0.88, 0.88, 0.85], alpha: 1 }];
+    if (showMesh) {
+      list.push({ mesh: "base", col: COL.base, alpha: 1 });
+      linkMats(qReal).forEach((M, k) => list.push({ mesh: LINKS[k], M, col: last ? COL[LINKS[k]] : [0.75, 0.75, 0.75], alpha: 1 }));
+      if (last && showTwin) linkMats(last.qtw).forEach((M, k) => list.push({ mesh: LINKS[k], M, col: [0.92, 0.41, 0.20], alpha: 0.28 }));
+      if (preview && previewPending()) linkMats(preview).forEach((M, k) => list.push({ mesh: LINKS[k], M, col: [0.38, 0.31, 0.84], alpha: 0.22 }));
+    }
+    V.draw(list);
+    V.text([300, 130, zGround], "plano del pie en home", "#898781", -130, 14);
+    // origen en el eje de la coxa
+    V.line([[0, 0, zGround], [0, 0, 70]], "#c3c2b7", 1.2, [5, 4]);
+    V.arrow([0, 0, 0], [40, 0, 0], "#d03b3b", "X"); V.arrow([0, 0, 0], [0, 40, 0], "#0ca30c", "Y"); V.arrow([0, 0, 0], [0, 0, 40], "#2a78d6", "Z (eje coxa)");
+    V.dot([0, 0, 0], "#0b0b0b", 4); V.text([0, 0, 0], "O", "#0b0b0b", -14, 14, true);
+    if (document.getElementById("showWs").checked) for (const p of G.workspace_mm) V.dot(p, "rgba(42,120,214,0.25)", 1.2);
+    if (seq.running && seq.pts.length) V.line(seq.pts, "rgba(208,59,59,0.6)", 1.2, [3, 3]);
+    if (last) {
+      if (document.getElementById("showTrail").checked) { V.line(trail.map(x => x[1]), "rgba(42,120,214,0.8)", 2);
+        if (showTwin) V.line(trailTwin.map(x => x[1]), "rgba(235,104,52,0.8)", 1.6, [4, 3]); }
+      if (document.getElementById("showRef").checked && last.allPos) drawSkeleton(last.qRefC, "rgba(82,81,78,0.8)", 1.6, [6, 4]);
+      if (showTwin) drawSkeleton(last.qtw, "#eb6834", 2, [5, 3]);
+      drawSkeleton(last.qc, "#2a78d6", 3, []);
+      const P = points(last.qc); JN.forEach((n, i) => V.text(P[i], n, "#0b0b0b", 8, -8));
+      V.text(P[3], "pie", "#2a78d6", 8, 14);
+    } else { drawSkeleton(G.q_inicial_cad, "#898781", 2.5, []); V.text(fk(G.q_inicial_cad), "sin telemetría (home)", "#898781"); }
+    if (preview && previewPending()) drawSkeleton(preview, "#6250d6", 2, [3, 3]);
+    const goal = target || (last && last.allPos ? last.refFoot : null);
+    if (goal) { const q = V.project(goal), c = V.ctx, d = V.dpr, r = 8 * d; c.strokeStyle = "#d03b3b"; c.lineWidth = 2 * d;
+      c.beginPath(); c.moveTo(q[0] - r, q[1]); c.lineTo(q[0] + r, q[1]); c.moveTo(q[0], q[1] - r); c.lineTo(q[0], q[1] + r); c.stroke(); }
   }
-  if (seq.pts && seq.pts.length && seq.running) line3(seq.pts, "rgba(208,59,59,0.5)", 1.2, [3, 3]);
-  if (last && document.getElementById("showTrail").checked && trail.length > 1) line3(trail.map(x => x[1]), "rgba(42,120,214,0.55)", 1.5 * dpr);
-  if (last && document.getElementById("showRef").checked && last.allPos) drawLeg(last.qRefC, "#52514e", 2 * dpr, [6 * dpr, 4 * dpr], 0.7);
-  if (preview) drawLeg(preview, "#eb6834", 2 * dpr, [3 * dpr, 3 * dpr], 0.9);
-  if (last) {
-    drawLeg(last.qc, "#2a78d6", 5 * dpr, []);
-    JN.forEach((n, i) => text3(legViewPoints(last.qc)[i], n, "#0b0b0b"));
-  } else {
-    drawLeg(G.q_inicial_cad, "#c3c2b7", 4 * dpr, []);
-    text3(fk(G.q_central_cad), "sin telemetría", "#898781");
-  }
-  const goal = target || (last && last.allPos ? last.refFoot : null);
-  if (goal) { const q = proj(goal); ctx.strokeStyle = "#d03b3b"; ctx.lineWidth = 2 * dpr; const s = 7 * dpr;
-    ctx.beginPath(); ctx.moveTo(q[0] - s, q[1]); ctx.lineTo(q[0] + s, q[1]); ctx.moveTo(q[0], q[1] - s); ctx.lineTo(q[0], q[1] + s); ctx.stroke(); }
   requestAnimationFrame(render);
 }
 requestAnimationFrame(render);
+document.querySelectorAll("#showMesh,#showTwin,#showRef,#showTrail,#showWs").forEach(el => el.onchange = () => dirty = true);
+window.addEventListener("resize", () => dirty = true);
+document.getElementById("png3d").onclick = () => {
+  const a = V.cv, b = V.ov, c = document.createElement("canvas"); c.width = a.width; c.height = a.height;
+  const x = c.getContext("2d"); x.drawImage(a, 0, 0); x.drawImage(b, 0, 0);
+  c.toBlob(bl => download(bl, "pata1_vista3d.png"));
+};
+
+/* =================================================================== gráficas */
+const store = new Graficas.Store();
+const chartsEl = document.getElementById("charts"), specs = [];
+const ROWS = [
+  { key: "q", title: "Ángulo", unit: "°", dec: 2, minSpan: 2, s: [["q", "real", "#2a78d6"], ["qt", "gemelo", "#eb6834", [5, 3]], ["qr", "referencia", "#52514e", [2, 3]]] },
+  { key: "w", title: "Velocidad", unit: "rad/s", dec: 3, minSpan: 0.5, s: [["w", "real", "#2a78d6"], ["wt", "gemelo", "#eb6834", [5, 3]], ["wr", "referencia", "#52514e", [2, 3]]] },
+  { key: "i", title: "Corriente (sensada)", unit: "A eq.", dec: 4, minSpan: 0.05, s: [["i", "real", "#2a78d6"], ["it", "gemelo", "#eb6834", [5, 3]], ["ir", "referencia", "#52514e", [2, 3]]], ilim: true },
+  { key: "u", title: "Esfuerzo de control (PWM)", unit: "%", dec: 1, minSpan: 20, s: [["u", "real", "#2a78d6"], ["ut", "gemelo", "#eb6834", [5, 3]]], pwm: true },
+  { key: "tau", title: "Par estimado Kt·I/d", unit: "N·m", dec: 4, minSpan: 0.02, s: [["tau", "real", "#2a78d6"], ["taut", "gemelo", "#eb6834", [5, 3]]] },
+];
+for (const r of ROWS) {
+  const lab = document.createElement("div"); lab.className = "rowlabel"; lab.textContent = r.title + (r.key === "tau" ? " (con |PWM| ≥ 25 %; Kt de catálogo)" : ""); chartsEl.appendChild(lab);
+  for (let i = 0; i < 3; i++) {
+    const cv = document.createElement("canvas"); chartsEl.appendChild(cv);
+    const lines = [];
+    if (r.pwm) lines.push({ y: GEM.control.pwm_max_pct[i], color: "#d03b3b", label: "saturación" }, { y: -GEM.control.pwm_max_pct[i], color: "#d03b3b" },
+                          { y: GEM.planta.zona_muerta_pct, color: "#c3c2b7", label: "zona muerta" }, { y: -GEM.planta.zona_muerta_pct, color: "#c3c2b7" });
+    if (r.ilim) lines.push({ y: GEM.control.ilimit_a[i], color: "#d03b3b", label: "ILIMIT" }, { y: -GEM.control.ilimit_a[i], color: "#d03b3b" });
+    specs.push({ canvas: cv, title: `${JN[i]} · ${r.title} [${r.unit}]`, unit: r.unit, dec: r.dec, minSpan: r.minSpan, lines,
+      series: r.s.map(([k, l, c, d]) => ({ key: `${k}${i}`, label: l, color: c, dash: d || [], width: k.endsWith("r") ? 1.1 : 1.5 })) });
+  }
+}
+specs.push({ canvas: document.getElementById("footChart"), title: "Error del pie [mm]", unit: "mm", dec: 2, minSpan: 2,
+  series: [{ key: "e_ref", label: "real – objetivo", color: "#d03b3b" }, { key: "e_tw", label: "real – gemelo", color: "#eb6834", dash: [5, 3] }] });
+const charts = new Graficas.Charts(store, specs);
+document.getElementById("win").onchange = (e) => { charts.window = +e.target.value; };
+document.getElementById("pause").onclick = (e) => { charts.paused = !charts.paused; e.target.textContent = charts.paused ? "Reanudar" : "Pausar"; };
+document.getElementById("clearCh").onclick = () => store.clear();
+document.getElementById("pngCharts").onclick = () => {
+  const cs = specs.map(s => s.canvas), cols = 3, w = cs[0].width, h = cs[0].height, rows = Math.ceil((cs.length - 1) / cols);
+  const out = document.createElement("canvas"); out.width = w * cols; out.height = h * rows + cs[cs.length - 1].height;
+  const x = out.getContext("2d"); x.fillStyle = "#fff"; x.fillRect(0, 0, out.width, out.height);
+  cs.slice(0, -1).forEach((c, k) => x.drawImage(c, (k % cols) * w, Math.floor(k / cols) * h));
+  x.drawImage(cs[cs.length - 1], 0, rows * h, out.width, cs[cs.length - 1].height);
+  out.toBlob(bl => download(bl, "pata1_graficas_gemelo.png"));
+};
+
+/* KPIs por articulación en la ventana visible */
+const kpiEl = document.getElementById("kpis");
+JN.forEach((n, i) => { const d = document.createElement("div"); d.className = "kpi"; d.innerHTML = `<h3>${n}</h3><div class="grid" id="kpi${i}"></div>`; kpiEl.appendChild(d); });
+function kpis() {
+  const st = store, t1 = charts.tEnd, j0 = st.lower(t1 - charts.window);
+  for (let i = 0; i < 3; i++) {
+    let n = 0, se = 0, ser = 0, nr = 0, irms = 0, ni = 0, sat = 0, nu = 0, tmax = 0, um = 0;
+    const g = (k, j) => st.s[k] ? st.s[k][st.idx(j)] : NaN;
+    for (let j = j0; j < st.n; j++) {
+      const q = g(`q${i}`, j), qt = g(`qt${i}`, j), qr = g(`qr${i}`, j), cur = g(`i${i}`, j), u = g(`u${i}`, j), tau = g(`tau${i}`, j);
+      if (q === q && qt === qt) { se += (q - qt) ** 2; n++; }
+      if (q === q && qr === qr) { ser += (q - qr) ** 2; nr++; }
+      if (cur === cur) { irms += cur * cur; ni++; }
+      if (u === u) { nu++; if (Math.abs(u) >= GEM.control.pwm_max_pct[i] - 0.5) sat++; um += Math.abs(u); }
+      if (tau === tau) tmax = Math.max(tmax, Math.abs(tau));
+    }
+    const f = (x, d) => isFinite(x) ? x.toFixed(d) : "—";
+    document.getElementById("kpi" + i).innerHTML =
+      `<span>RMSE ángulo real–gemelo</span><b>${f(Math.sqrt(se / n), 2)} °</b>` +
+      `<span>RMSE ángulo real–referencia</span><b>${f(Math.sqrt(ser / nr), 2)} °</b>` +
+      `<span>corriente rms</span><b>${f(Math.sqrt(irms / ni), 3)} A eq.</b>` +
+      `<span>PWM medio · saturado</span><b>${f(um / nu, 0)} % · ${f(100 * sat / nu, 1)} %</b>` +
+      `<span>par máximo estimado</span><b>${f(tmax, 3)} N·m</b>`;
+  }
+}
 
 /* =================================================================== paneles (10 Hz) */
-const jt = document.getElementById("joints");
-JN.forEach((n, i) => { const tr = document.createElement("tr"); tr.innerHTML = `<td>${n}</td>` + "<td></td>".repeat(5); jt.appendChild(tr); });
-const deg = (x) => (x * 180 / Math.PI).toFixed(1);
+const ab = document.getElementById("angleBox");
+JN.forEach(n => { const tr = document.createElement("tr"); tr.innerHTML = `<td>${n}</td><td></td><td></td><td></td>`; ab.appendChild(tr); });
 setInterval(() => {
   if (link && performance.now() - lastRx > 1500) statusEl.innerHTML = `<span class="err">Sin datos del ESP32 (¿reiniciado o cable suelto?)</span>`;
   else if (last) statusEl.textContent = (link && link.sim ? "ESP32 simulado · " : "Conectado · ") + `t = ${last.t.toFixed(1)} s`;
-  drawSpark();
+  charts.draw(); if (store.n) kpis();
   if (!last) return;
-  const rows = jt.querySelectorAll("tr");
-  last.m.forEach((s, i) => {
-    const c = rows[i + 1].children, md = MODE_TXT[s.mode] || s.mode;
-    const e = (last.qRefC[i] - last.qc[i]) * 180 / Math.PI;
-    c[1].textContent = s.mode === 3 ? `${md} · ${STATE_TXT[s.state] || s.state}` : md;
-    c[2].textContent = s.pos.toFixed(4); c[3].textContent = deg(last.qc[i]);
-    c[4].textContent = s.mode === 3 ? deg(last.qRefC[i]) : "—"; c[5].textContent = s.mode === 3 ? e.toFixed(2) : "—";
-  });
+  const rows = ab.querySelectorAll("tr");
+  last.m.forEach((s, i) => { const c = rows[i + 1].children;
+    c[1].textContent = (last.qc[i] * DEG).toFixed(1) + "°"; c[2].textContent = (last.qtw[i] * DEG).toFixed(1) + "°";
+    c[3].textContent = s.mode === 3 ? (last.qRefC[i] * DEG).toFixed(1) + "°" : "—"; });
   document.getElementById("footReal").textContent = last.foot.map(x => x.toFixed(1)).join(", ");
   document.getElementById("footErr").textContent = isFinite(last.err) ? `${last.err.toFixed(2)} mm` : "—";
-  document.getElementById("footRef").textContent = last.goal ? `Objetivo: ${last.goal.map(x => x.toFixed(1)).join(", ")} mm` +
-    (target ? " (enviado por IK)" : " (referencia del firmware)") : "Sin objetivo: las articulaciones no están en modo posición.";
+  document.getElementById("footInfo").textContent = (last.goal ? `Objetivo ${last.goal.map(x => x.toFixed(1)).join(", ")} mm · ` : "") +
+    `gemelo a ${last.errTw.toFixed(2)} mm de la pata real · modos: ${last.m.map(s => MODE_TXT[s.mode] || s.mode).join(" / ")}`;
 }, 100);
-const sp = document.getElementById("spark"), sctx = sp.getContext("2d");
-function drawSpark() {
-  const r = sp.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
-  sp.width = r.width * dpr; sp.height = r.height * dpr; sctx.clearRect(0, 0, sp.width, sp.height);
-  const info = document.getElementById("sparkInfo");
-  if (!stepTrace) {
-    info.textContent = "Elige un objetivo válido y pulsa Enviar a la pata para capturar la respuesta.";
-    return;
-  }
-  const { samples, amplitude, error, end } = stepTrace;
-  const left = 56 * dpr, right = sp.width - 16 * dpr, top = 20 * dpr, bottom = sp.height - 30 * dpr;
-  const values = samples.map(([, mm]) => mm);
-  const lo = Math.min(0, ...values), hi = Math.max(1, amplitude, ...values);
-  const pad = (hi - lo) * 0.08;
-  const X = t => left + (t + 1) / (STEP_SECONDS + 1) * (right - left);
-  const Y = mm => bottom - (mm - lo + pad) / (hi - lo + 2 * pad) * (bottom - top);
-  function line(pts, color, dash = []) {
-    sctx.strokeStyle = color; sctx.lineWidth = 1.5 * dpr; sctx.setLineDash(dash);
-    sctx.beginPath();
-    pts.forEach(([t, mm], i) => i ? sctx.lineTo(X(t), Y(mm)) : sctx.moveTo(X(t), Y(mm)));
-    sctx.stroke(); sctx.setLineDash([]);
-  }
-  sctx.fillStyle = "#52514e"; sctx.font = `${12 * dpr}px system-ui`;
-  sctx.fillText("mm", 8 * dpr, 14 * dpr);
-  for (let i = 0; i <= 4; i++) {
-    const mm = lo + (hi - lo) * i / 4;
-    line([[-1, mm], [STEP_SECONDS, mm]], "#e1e0d9");
-    sctx.fillText(mm.toFixed(1), 8 * dpr, Y(mm) + 4 * dpr);
-    const t = STEP_SECONDS * i / 4;
-    sctx.fillText(`${t} s`, X(t) - 10 * dpr, bottom + 18 * dpr);
-  }
-  line([[-1, 0], [0, 0], [0, amplitude], [STEP_SECONDS, amplitude]], "#52514e", [5 * dpr, 4 * dpr]);
-  line(samples, "#2a78d6");
-  info.textContent = `Escalón de ${amplitude.toFixed(2)} mm · error espacial ${error.toFixed(2)} mm · ${end || "Capturando (20 s)"}`;
-}
+setTargetInputs(fk(G.q_inicial_cad));
 </script>
 </body>
 </html>

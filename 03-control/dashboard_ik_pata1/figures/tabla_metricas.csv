@@ -1,33 +1,33 @@
 ﻿grupo,elemento,metrica,valor,unidad
-Verificación de la cinemática inversa,FK(IK(p)),error máximo,4.928080417233778e-16,m
+Verificación de la cinemática inversa,FK(IK(p)),error máximo,2.6143727386694524e-16,m
 Verificación de la cinemática inversa,FK(IK(p)),muestras,29791,
-Verificación de la cinemática inversa,Caja cartesiana,con solución dentro de límites,2542,
-Verificación de la cinemática inversa,Caja cartesiana,solución fuera de límites,8563,
-Verificación de la cinemática inversa,Caja cartesiana,fuera del alcance,8893,
-Error de posición del efector final,Punto a punto,RMSE,3.3896142237422033,mm
-Error de posición del efector final,Punto a punto,error máximo,4.924074077411183,mm
-Error de posición del efector final,Punto a punto,error permanente,4.924074077411183,mm
-Error angular máximo por articulación,Punto a punto,Coxa,7.364665803380468,°
-Error angular máximo por articulación,Punto a punto,Fémur,19.783777014709315,°
-Error angular máximo por articulación,Punto a punto,Tibia,28.0241622774929,°
-Error de posición del efector final,Línea recta,RMSE,7.643935814113485,mm
-Error de posición del efector final,Línea recta,error máximo,12.905291798113522,mm
-Error de posición del efector final,Línea recta,error permanente,2.1831816149284236,mm
-Error angular máximo por articulación,Línea recta,Coxa,4.033013030737558,°
-Error angular máximo por articulación,Línea recta,Fémur,4.816115278936768,°
-Error angular máximo por articulación,Línea recta,Tibia,5.603313803775394,°
-Error de posición del efector final,Círculo,RMSE,9.155072561794016,mm
-Error de posición del efector final,Círculo,error máximo,15.89843992143266,mm
-Error de posición del efector final,Círculo,error permanente,4.498404574684848,mm
-Error angular máximo por articulación,Círculo,Coxa,3.6375960395303895,°
-Error angular máximo por articulación,Círculo,Fémur,7.775716558472646,°
-Error angular máximo por articulación,Círculo,Tibia,7.076738344976727,°
-Error de posición del efector final,Ciclo de paso,RMSE,13.440417498034556,mm
-Error de posición del efector final,Ciclo de paso,error máximo,22.425700402893174,mm
-Error de posición del efector final,Ciclo de paso,error permanente,4.157996938995511,mm
-Error angular máximo por articulación,Ciclo de paso,Coxa,5.7558523479846615,°
-Error angular máximo por articulación,Ciclo de paso,Fémur,9.82443136078653,°
-Error angular máximo por articulación,Ciclo de paso,Tibia,8.387771398050104,°
+Verificación de la cinemática inversa,Caja cartesiana,con solución dentro de límites,2940,
+Verificación de la cinemática inversa,Caja cartesiana,solución fuera de límites,7945,
+Verificación de la cinemática inversa,Caja cartesiana,fuera del alcance,9115,
+Error de posición del efector final,Punto a punto,RMSE,3.380361154423204,mm
+Error de posición del efector final,Punto a punto,error máximo,4.05586173248868,mm
+Error de posición del efector final,Punto a punto,error permanente,4.05586173248868,mm
+Error angular máximo por articulación,Punto a punto,Coxa,7.118583570918681,°
+Error angular máximo por articulación,Punto a punto,Fémur,18.769521708293546,°
+Error angular máximo por articulación,Punto a punto,Tibia,28.5900770704446,°
+Error de posición del efector final,Línea recta,RMSE,7.245194271333879,mm
+Error de posición del efector final,Línea recta,error máximo,12.64964766296342,mm
+Error de posición del efector final,Línea recta,error permanente,3.3224826065997144,mm
+Error angular máximo por articulación,Línea recta,Coxa,3.6561530408798664,°
+Error angular máximo por articulación,Línea recta,Fémur,4.599728546795464,°
+Error angular máximo por articulación,Línea recta,Tibia,5.3691973877589225,°
+Error de posición del efector final,Círculo,RMSE,9.500754070149446,mm
+Error de posición del efector final,Círculo,error máximo,16.535909924658704,mm
+Error de posición del efector final,Círculo,error permanente,4.025423157609246,mm
+Error angular máximo por articulación,Círculo,Coxa,3.408581067261312,°
+Error angular máximo por articulación,Círculo,Fémur,6.3548706990144,°
+Error angular máximo por articulación,Círculo,Tibia,6.9084332205886385,°
+Error de posición del efector final,Ciclo de paso,RMSE,12.958586972720923,mm
+Error de posición del efector final,Ciclo de paso,error máximo,21.808977400674024,mm
+Error de posición del efector final,Ciclo de paso,error permanente,3.9907295502644664,mm
+Error angular máximo por articulación,Ciclo de paso,Coxa,5.718633142101403,°
+Error angular máximo por articulación,Ciclo de paso,Fémur,9.4795526014539,°
+Error angular máximo por articulación,Ciclo de paso,Tibia,8.176178827535287,°
 Respuesta al escalón · lazo de corriente,Coxa,tr,0.007999999999999993,s
 Respuesta al escalón · lazo de corriente,Coxa,Mp,0.0,%
 Respuesta al escalón · lazo de corriente,Coxa,ts,0.013999999999999999,s
@@ -52,7 +52,7 @@ Lazo de posición · análisis lineal,Coxa,margen de fase,86.25784658786375,°
 Separación de frecuencias,Coxa,corriente/velocidad,34.226869863559145,×
 Separación de frecuencias,Coxa,velocidad/posición,3.7852018573533908,×
 Saturación durante el ciclo de paso,Coxa,PWM saturado,0.0,%
-Saturación durante el ciclo de paso,Coxa,ILIMIT alcanzado,9.714285714285714,%
+Saturación durante el ciclo de paso,Coxa,ILIMIT alcanzado,9.4,%
 Respuesta al escalón · lazo de corriente,Fémur,tr,0.007999999999999993,s
 Respuesta al escalón · lazo de corriente,Fémur,Mp,0.0,%
 Respuesta al escalón · lazo de corriente,Fémur,ts,0.013999999999999999,s
@@ -77,7 +77,7 @@ Lazo de posición · análisis lineal,Fémur,margen de fase,69.99466954695828,°
 Separación de frecuencias,Fémur,corriente/velocidad,35.308066588820004,×
 Separación de frecuencias,Fémur,velocidad/posición,2.6552905877969595,×
 Saturación durante el ciclo de paso,Fémur,PWM saturado,0.0,%
-Saturación durante el ciclo de paso,Fémur,ILIMIT alcanzado,6.571428571428571,%
+Saturación durante el ciclo de paso,Fémur,ILIMIT alcanzado,6.8428571428571425,%
 Respuesta al escalón · lazo de corriente,Tibia,tr,0.007999999999999993,s
 Respuesta al escalón · lazo de corriente,Tibia,Mp,0.0,%
 Respuesta al escalón · lazo de corriente,Tibia,ts,0.013999999999999999,s

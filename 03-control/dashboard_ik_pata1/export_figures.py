@@ -138,31 +138,72 @@ def fig_workspace(E, kin, ikv):
     E.save(fig, "02_espacio_trabajo_2d")
 
 
-def fig_leg_mesh(E, cfg, kin):
-    try:
-        from mesh_utils import load_leg_meshes, pose_meshes
-        meshes = load_leg_meshes(cfg, kin)
-    except Exception as exc:     # noqa: BLE001
-        print("  (sin mallas STL:", exc, ")")
-        meshes = None
-    q = np.array(cfg["trayectorias"]["postura_central_cad_rad"])
-    fig = plt.figure(figsize=(6, 5))
-    ax = fig.add_subplot(projection="3d")
-    pts = [mm(kin.points(q)[0])]
-    if meshes:
-        for (V, F), col in zip(pose_meshes(meshes, kin, q), JC):
-            Vm = mm(V)
-            pc = Poly3DCollection(Vm[F], facecolor=col, edgecolor="none", alpha=0.35)
-            ax.add_collection3d(pc)
-            pts.append(Vm)
-    draw_leg(ax, kin, q, label="modelo cinemático")
-    style3d(ax)
-    set_equal_3d(ax, np.vstack(pts))
-    ax.view_init(elev=20, azim=-60)
-    ax.set_title("Pata 1 en la postura central" + (" (mallas STL del 4-nov, referencia)" if meshes else ""))
-    ax.legend(loc="upper left")
-    E.save(fig, "03_pata_postura_central")
+_MESH_CACHE = {}
 
+
+def _fusion_meshes(cfg):
+    if "m" not in _MESH_CACHE:
+        try:
+            from mesh_utils import load_fusion_meshes
+            _MESH_CACHE["m"] = load_fusion_meshes(cfg) if "mallas" in cfg["geometria"] else None
+        except Exception as exc:  # noqa: BLE001
+            print("  (sin mallas de Fusion:", exc, ")")
+            _MESH_CACHE["m"] = None
+    return _MESH_CACHE["m"]
+
+
+def _lambert(tris, rgb, light=(0.4, -0.5, 0.8)):
+    n = np.cross(tris[:, 1] - tris[:, 0], tris[:, 2] - tris[:, 0])
+    n /= np.linalg.norm(n, axis=1, keepdims=True) + 1e-12
+    L = np.array(light) / np.linalg.norm(light)
+    d = 0.45 + 0.55 * np.abs(n @ L)
+    return np.clip(np.outer(d, rgb), 0, 1)
+
+
+def draw_leg_mesh(ax, cfg, kin, q, alpha=1.0, tint=None, base=True, axes=True):
+    """Pata con las mallas de Fusion (mm, marco de la pata) en la pose q (CAD). Devuelve los vértices."""
+    m = _fusion_meshes(cfg)
+    pts = [mm(kin.points(q)[0])]
+    if not m:
+        return pts
+    cols = {"base": (0.78, 0.78, 0.76), "coxa": (0.55, 0.62, 0.70), "femur": (0.45, 0.62, 0.86), "tibia": (0.55, 0.62, 0.70)}
+    tr_ = kin.link_transforms(q)
+    for k, name in enumerate(["base", "coxa", "femur", "tibia"]):
+        if name not in m or (name == "base" and not base):
+            continue
+        V, F = m[name]
+        if name != "base":
+            R, piv, piv0 = tr_[k - 1]
+            V = (V - piv0) @ R.T + piv
+        T = mm(V)[F]
+        ax.add_collection3d(Poly3DCollection(T, facecolors=_lambert(T, tint or cols[name]), edgecolor="none",
+                                             alpha=alpha, linewidths=0))
+        pts.append(mm(V))
+    if axes:
+        for v, c, lab in [((40, 0, 0), C["crit"], "X"), ((0, 40, 0), "#0ca30c", "Y"), ((0, 0, 45), C["coxa"], "Z (eje coxa)")]:
+            ax.quiver(0, 0, 0, *v, color=c, lw=2, arrow_length_ratio=0.15)
+            ax.text(*(np.array(v) * 1.12), lab, color=c, fontsize=8, fontweight="bold")
+        ax.plot([0, 0], [0, 0], [-35, 60], ls="--", color=C["muted"], lw=0.8)
+        ax.text(0, 0, -8, "O", fontsize=8)
+    return pts
+
+
+def fig_leg_mesh(E, cfg, kin):
+    for name, q, title in [("03_pata_home", np.array(cfg["simulacion"]["postura_inicial_cad_rad"], float),
+                            "Pata 1 en home (pata estirada, q = 0)"),
+                           ("03b_pata_postura_central", np.array(cfg["trayectorias"]["postura_central_cad_rad"], float),
+                            "Pata 1 en la postura central de las trayectorias")]:
+        fig = plt.figure(figsize=(7.5, 5))
+        ax = fig.add_subplot(projection="3d")
+        pts = draw_leg_mesh(ax, cfg, kin, q)
+        draw_leg(ax, kin, q, color=C["ink"], lw=1.6, label="modelo cinemático (J0, J1, J2, pie)")
+        style3d(ax)
+        set_equal_3d(ax, np.vstack(pts))
+        ax.view_init(elev=22, azim=-125)
+        deg = np.degrees(q)
+        ax.set_title(f"{title}\nq = [{deg[0]:.0f}°, {deg[1]:.0f}°, {deg[2]:.0f}°] · origen en el eje de la coxa", fontsize=9)
+        ax.legend(loc="upper left", fontsize=7)
+        E.save(fig, name)
 
 # ===================================================================== trayectorias
 def fig_trajectory(E, kin, out, metrics):

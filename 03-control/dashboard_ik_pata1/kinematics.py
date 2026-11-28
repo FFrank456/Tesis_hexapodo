@@ -42,7 +42,40 @@ class LegKinematics:
         cfg = cfg or load_config()
         self.cfg = cfg
         data = json.loads(resolve(cfg, cfg["geometria"]["medicion_fusion"]).read_text(encoding="utf-8"))
-        assert data["documento"] == "ROBOT_ESAMBLE_alfred_mejorado"
+        if data.get("formato") == "pata1_v2":
+            self._load_v2(data, foot_point_mm)
+        else:
+            self._load_v1(data, cfg, foot_point_mm)
+        self._finish(cfg)
+
+    def _load_v2(self, data, foot_point_mm):
+        """Geometría leída de Fusion por fusion/actualizar_desde_fusion.py, ya en el marco de la pata:
+        origen en el eje de la coxa, Z hacia arriba, X a lo largo de la pata estirada, Y = Z × X."""
+        self.frame = "pata"
+        self.source = data
+        self.p0 = np.array(data["J0"]["punto_mm"]) / 1000
+        self.p1 = np.array(data["J1"]["punto_mm"]) / 1000
+        self.p2 = np.array(data["J2"]["punto_mm"]) / 1000
+        self.pf = np.array(foot_point_mm if foot_point_mm is not None else data["pie"]["centro_esfera_mm"]) / 1000
+        self.foot_radius = data["pie"]["radio_mm"] / 1000
+        R = np.array(data["marco"]["ejes_en_fusion_filas"])
+        y = np.array(data["J1"]["eje"], float)
+        y = y / np.linalg.norm(y) * np.sign(y[1])                   # +Y del marco
+        # Sentidos positivos = los de Fusion: J0 gira alrededor del eje de su joint (-Z),
+        # J1 alrededor de -Y (sube el fémur, README de cinemática) y J2 alrededor de +Y (baja el pie).
+        j0 = [j for j in data["joints_fusion"] if "coxa" in j["name"].lower()]
+        self.a0 = R @ np.array(j0[0]["axis"]) if j0 else np.array([0.0, 0.0, -1.0])
+        self.a1 = -y
+        jt = [j for j in data["joints_fusion"] if "tibia" in j["name"].lower()]
+        self.a2 = R @ np.array(jt[0]["axis"]) if jt else y
+        assert abs(abs(self.a2 @ y) - 1) < 1e-6, "J2 debe ser paralelo a Y"
+        self.j1_axis_raw = y
+
+    def _load_v1(self, data, cfg, foot_point_mm):
+        """Medición anterior (medicion_fusion_u2.json), en el marco raíz de Fusion."""
+        self.frame = "fusion"
+        self.source = data
+        self.foot_radius = 0.0
 
         def joint(parent, child):
             hits = [u for u in data["uniones"] if not u["suprimida"]
@@ -65,12 +98,15 @@ class LegKinematics:
         self.a0 = np.array(j0["eje"]) / np.linalg.norm(j0["eje"])
         self.a1 = -np.array(j1["eje"]) / np.linalg.norm(j1["eje"])
         self.a2 = np.array(j2["eje"]) / np.linalg.norm(j2["eje"])
+        self.j1_axis_raw = np.array(j1["eje"], float)
+
+    def _finish(self, cfg):
         self.c = self.p1 - self.p0
         self.f = self.p2 - self.p1
         self.t = self.pf - self.p2
 
         # --- Base para la inversa ---------------------------------------------------
-        u = np.array(j1["eje"], float)
+        u = np.array(self.j1_axis_raw, float)
         u[2] = 0.0
         self.u = u / np.linalg.norm(u)                 # eje de J1 (horizontal)
         self.r0 = np.cross(self.u, [0.0, 0.0, 1.0])     # radial hacia afuera en q0 = 0

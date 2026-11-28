@@ -1,0 +1,183 @@
+{
+  "formato": "pata1_v2",
+  "documento": "ROBOT_ESAMBLE_alfred_mejorado 2",
+  "fecha": "2026-11-28",
+  "marco": {
+    "descripcion": "origen en el eje de la coxa; Z = eje de la coxa hacia arriba; X = a lo largo de la pata estirada; Y = Z x X (ejes de J1 y J2)",
+    "origen_en_fusion_mm": [
+      97.56,
+      34.41,
+      -9.7028
+    ],
+    "ejes_en_fusion_filas": [
+      [
+        0.707106781,
+        -0.707106781,
+        0.0
+      ],
+      [
+        0.707106781,
+        0.707106781,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        1.0
+      ]
+    ]
+  },
+  "unidades": "mm",
+  "pose_cero": "pata estirada tal como está el ensamble (todas las articulaciones en 0)",
+  "J0": {
+    "punto_mm": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "eje": [
+      -0.0,
+      0.0,
+      1.0
+    ]
+  },
+  "J1": {
+    "punto_mm": [
+      49.9953,
+      0.0,
+      6.05
+    ],
+    "eje": [
+      -0.0,
+      1.0,
+      0.0
+    ],
+    "nota": "eje físico (cilindro del buje)"
+  },
+  "J2": {
+    "punto_mm": [
+      109.9953,
+      0.0,
+      6.05
+    ],
+    "eje": [
+      -0.0,
+      1.0,
+      0.0
+    ],
+    "nota": "eje físico (cilindro del buje)"
+  },
+  "joints_fusion": [
+    {
+      "name": "join_tibia_1",
+      "asbuilt": false,
+      "angle": 0.0,
+      "axis": [
+        0.7071067811865471,
+        0.7071067811865479,
+        4.56980733644842e-17
+      ],
+      "origin_mm": [
+        173.92424220787873,
+        -44.78266929243322,
+        -6.152833669443992
+      ],
+      "origin_leg_mm": [
+        109.9953,
+        -2.0,
+        3.55
+      ]
+    },
+    {
+      "name": "Revolución 1",
+      "asbuilt": false,
+      "angle": 0.0,
+      "axis": [
+        1.1604898474396816e-15,
+        -1.3916251984475075e-15,
+        -0.9999999999999992
+      ],
+      "origin_mm": [
+        9.0,
+        8.326672684688674e-16,
+        -5.551115123125783e-16
+      ],
+      "origin_leg_mm": [
+        -38.2898,
+        -86.9529,
+        9.7028
+      ]
+    },
+    {
+      "name": "join_coxa_1_J0",
+      "asbuilt": true,
+      "angle": 0.0,
+      "axis": [
+        0.0,
+        -9.054976338439982e-16,
+        -1.0
+      ],
+      "origin_mm": [
+        97.55671021205552,
+        34.41329057278436,
+        -9.702834254936208
+      ],
+      "origin_leg_mm": [
+        -0.0047,
+        0.0,
+        0.0
+      ]
+    }
+  ],
+  "pie": {
+    "centro_esfera_mm": [
+      206.0963,
+      0.0749,
+      -20.5577
+    ],
+    "radio_mm": 10.3913,
+    "contacto_mm": [
+      206.0963,
+      0.0749,
+      -30.949
+    ],
+    "pieza": "TibiaPunta"
+  },
+  "mallas": {
+    "archivo": "mallas_pata1_v2.npz",
+    "triangulos": 17290,
+    "celda_mm": 1.0,
+    "eslabones": {
+      "base": [
+        "soporte_J0_chasis",
+        "soporte_J0_inferior",
+        "Soporte_ESP32S3",
+        "MotorN20_conEncoder:1+CuerpoMotorN20"
+      ],
+      "coxa": [
+        "coxa_link_1",
+        "brazo_J0_inferior",
+        "brazo_J0",
+        "Brida_acopleCoxa",
+        "soporte_J1_buje:1",
+        "sup_articulacion",
+        "MotorN20_conEncoder:1+Eje"
+      ],
+      "femur": [
+        "femur_link_1",
+        "Brida_acoplefemur",
+        "femur_tapa_J1",
+        "femur_link:1",
+        "soporte_J1_buje (1)"
+      ],
+      "tibia": [
+        "tibia_link_1",
+        "inf_articulacion",
+        "Tibiaini",
+        "Tibiamed",
+        "TibiaPunta",
+        "Brida_acople_tibia"
+      ]
+    }
+  }
+}

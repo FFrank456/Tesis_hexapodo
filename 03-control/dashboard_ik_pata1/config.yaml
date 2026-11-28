@@ -4,27 +4,20 @@
 # provisional y conviene confirmarlo. Las rutas son relativas a esta carpeta.
 #
 # Marcos y ángulos
-#   - q_cad: ángulos de mando de Fusion (ROBOT_ESAMBLE_alfred_mejorado), en rad.
+#   - Marco de la pata (todas las posiciones en mm): origen en el eje de la coxa (J0),
+#     Z = eje de la coxa hacia arriba, X = a lo largo de la pata estirada, Y = Z × X.
+#   - q_cad: ángulos de mando de Fusion (ROBOT_ESAMBLE_alfred_mejorado 2), en rad.
+#     q = 0 es la pata estirada tal como está el ensamble.
 #   - q_enc: ángulos del encoder del firmware, en rad.
 #   - q_cad = signo * q_enc + offset   (por articulación)
 
 geometria:
-  # Medición del ensamble con la API de Fusion (MedirPataU2.py).
-  medicion_fusion: ../../01-mecanica/cinematica-directa-pata/medicion_fusion_u2.json
-  # Punto del pie: el más bajo de la malla soporte_tibia_A en q = 0 (README de cinemática, línea 27).
-  cuerpo_pie: soporte_tibia_A
-  # Mallas STL de la exportación del 4-nov (versión ANTERIOR a alfred_mejorado).
-  # Se usan solo como referencia visual; la cinemática sale de la medición de arriba.
-  mallas_stl:
-    carpeta: ../../01-mecanica/urdf/ROBOT_ESAMBLE_description-20261104T154508Z-1-001/ROBOT_ESAMBLE_description/meshes
-    archivos: [pata_1_coxa_link_1.stl, pata_1_femur_link_1.stl, pata_1_tibia_link_1.stl]
-    # Origen de cada articulación en esa exportación (mm, marco raíz), ROBOT_ESAMBLE.xacro:406-424.
-    origen_articulacion_mm:
-      - [92.660, 39.416, -6.653]
-      - [128.015, 4.061, -6.653]
-      - [170.088, -38.719, -6.653]
-    tamano_celda_mm: 1.2     # simplificación por agrupamiento de vértices (solo para dibujar)
-
+  # Leída de Fusion por MCP con fusion/actualizar_desde_fusion.py (ejes físicos de los bujes,
+  # pie = centro de la esfera de TibiaPunta). La medición anterior en el marco raíz de Fusion
+  # sigue en ../../01-mecanica/cinematica-directa-pata/medicion_fusion_u2.json.
+  medicion_fusion: fusion/geometria_pata1_v2.json
+  cuerpo_pie: TibiaPunta
+  mallas: fusion/mallas_pata1_v2.npz
 articulaciones:
   nombres: [Coxa, Fémur, Tibia]
   # Fémur: el encoder positivo BAJA el fémur (identificacion_pata_modificada_2026-11-19.md:33)
@@ -32,8 +25,9 @@ articulaciones:
   # Tibia: encoder positivo baja la tibia; en Fusion J2 positivo baja el pie -> signo +1.
   # TODO: signo de la coxa sin comprobar (se supone +1).
   signo_encoder_a_cad: [1, -1, 1]
-  # TODO: relación entre el cero del encoder y el cero del CAD. Se supone que la pose de
-  # arranque es la pose cero del CAD (propuesta de identificacion_..._2026-11-19.md:73).
+  # La pata siempre arranca estirada en la pose cero del CAD (indicación del usuario, 28-nov):
+  # el encoder vale 0 ahí, así que el offset es 0. Requiere que no haya una pose de arranque
+  # distinta guardada en la placa (NVS,POSE,CLEAR).
   offset_cad_rad: [0.0, 0.0, 0.0]
   # TODO: límites mecánicos reales. Provisional = rangos probados en la pata (marco del encoder):
   #   coxa  -0.5…1.5   (pata_MOD_DRV/CLAUDE.md:83)
@@ -133,9 +127,9 @@ control:
 
 simulacion:
   dt_planta_s: 2.0e-4
-  # Arranque común del dashboard y de la simulación (coxa, fémur, tibia en CAD).
-  # Fémur horizontal y tibia casi alineada con él, con 3° de flexión.
-  postura_inicial_cad_rad: [0.0, 0.0, -0.24]
+  # Arranque común del dashboard y de la simulación (coxa, fémur, tibia en CAD):
+  # la pata estirada, todo en 0 (home).
+  postura_inicial_cad_rad: [0.0, 0.0, 0.0]
 
 trayectorias:
   # Postura central (q_cad, rad). Debe quedar dentro de los límites.

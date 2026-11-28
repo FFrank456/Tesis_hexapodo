@@ -48,39 +48,49 @@ La vista de cinemática, la simulación de trayectorias y el modo simulado web
 arrancan en `simulacion.postura_inicial_cad_rad` de `config.yaml`. En esa
 postura el fémur está horizontal y la tibia queda casi alineada con él.
 
-### 3. Dashboard en vivo con la pata real: `web/pata_ik_3d.html`
+### 3. Gemelo digital en vivo con la pata real: `web/pata_ik_3d.html`
 
-Página web que **se conecta a la pata por USB (Web Serial)**. Hace cuatro cosas:
-- dibuja en 3D la pata real con los ángulos de los encoders, la referencia del firmware y el objetivo;
-- mueve el pie a una posición x, y, z con la cinemática inversa;
-- corre secuencias de puntos (punto a punto, círculo y ciclo de paso);
-- graba un CSV con el error del pie en mm.
+Página web que **se conecta a la pata por USB (Web Serial)** y la compara en vivo con un **gemelo digital**:
+- El gemelo es una réplica en JavaScript de la cascada del firmware más la planta identificada (`web/gemelo.js`, la misma lógica que `cascade_control.py`).
+- Recibe los mismos objetivos que la pata. Usa las ganancias de la placa en cuanto llegan las líneas `CFG`; antes de eso, las de `config.yaml`.
 
-No usa internet ni librerías externas. La geometría está en `web/geometria_pata1.js`. Si cambias `config.yaml`, regenérala con `python export_web_geometry.py`.
+Qué muestra:
+- **Vista 3D** de la pata con las mallas de Fusion: la real en azul y gris, el gemelo en naranja translúcido y la referencia del firmware en gris discontinuo.
+  - El origen O está en el eje de la coxa, con X a lo largo de la pata estirada, Y en los ejes de J1 y J2, y Z sobre el eje de la coxa hacia arriba.
+  - La rejilla es el plano del pie en home.
+- **Gráficas sincronizadas** de cada articulación, con la pata real, el gemelo y la referencia:
+  - ángulo, velocidad, corriente (con ILIMIT) y esfuerzo de control (PWM, con saturación y zona muerta);
+  - par estimado τ = Kt·I/d;
+  - error del pie.
+  - Ventana de 10 a 180 s, pausa y cursor común (pasa el ratón).
+- **Indicadores por articulación:** RMSE real–gemelo y real–referencia, corriente rms, PWM medio y saturado, y par máximo.
+- **IK, secuencias y CSV**, como antes. Además, *Home* manda las tres articulaciones a 0. Los botones *Guardar imagen 3D* y *Guardar gráficas* descargan PNG.
+
+**Home = pata estirada = q = 0.** El encoder tiene que valer 0 en esa pose al encender. Si en la placa hay guardada una pose de arranque distinta, bórrala una vez desde el dashboard de la pata con el comando `NVS,POSE,CLEAR`. Si no, el dibujo saldrá girado.
 
 Pasos:
 
-1. **Cierra el dashboard de la pata (`pata_dashboard.html`) y cualquier monitor serie.** Solo un programa puede tener el puerto abierto.
-2. **Abre `web/pata_ik_3d.html` en Chrome o Edge,** con doble clic o arrastrándolo al navegador. Arriba debe aparecer en verde *modelo OK*: el modelo del navegador coincide con el de Python.
-3. **Practica primero con *Modo simulado*,** sin la pata: es un ESP32 falso que responde a los mismos comandos.
-4. **Pulsa *Conectar a la pata*** y elige el puerto (COM6 o COM16). En ~1 s la pata azul se mueve igual que la real.
-   - **Si el dibujo no coincide con la pata real** (una articulación gira al revés o está desplazada), corrige el signo o el offset en *Mapeo encoder → CAD*.
-   - O pon la pata en la pose cero del CAD (fémur horizontal, tibia como en el modelo) y pulsa *La pata está en la pose cero del CAD*.
-5. **Mueve el pie** con los botones ±5 mm o escribiendo x, y, z. La pata naranja muestra la solución antes de enviarla. Pulsa *Enviar a la pata*: manda `Mx,PREF` y, si hace falta, `Mx,MODE,POSITION` a las tres articulaciones.
-6. **Corre una secuencia:** elige una en *Secuencias de prueba* y pulsa *Iniciar*. Al terminar se descarga el CSV con el error al llegar a cada punto.
-7. **Para todo con STOP o la tecla Esc.**
+1. Cierra `pata_dashboard.html` y cualquier monitor serie: solo un programa puede abrir el puerto a la vez.
+2. Enciende la pata **estirada**. Abre `web/pata_ik_3d.html` en Chrome o Edge con doble clic. Arriba debe aparecer *modelo = Python ✓*.
+3. Practica con *Modo simulado*. En ese modo, otro gemelo con la planta alterada hace de "pata real" (fricción +10 %, inercia +20 %, gravedad +10 %), así ves cómo se notan las diferencias.
+4. Pulsa *Conectar a la pata* y elige el puerto (COM6 o COM16). En ~1 s debería aparecer *gemelo: ganancias de la placa*. Mueve la pata a mano y comprueba que el dibujo azul gira igual. Si no, corrige el signo en *Mapeo encoder → CAD*.
+5. Mueve el pie con IK o corre una secuencia con *grabar CSV* marcado. La secuencia termina con el RMSE de llegada y el RMSE real–gemelo.
+6. Genera las figuras de la tesis a partir de ese CSV:
+   ```powershell
+   python figuras_gemelo.py "$env:USERPROFILE\Downloads\pata1_secuencia_gait.csv"
+   ```
+   En ~30 s salen en `figures/gemelo/`: g01 ángulos, g02 velocidad, g03 corriente, g04 esfuerzo de control, g05 par, g06 pie en 3D sobre la pata de Fusion y g07 error del pie, más `tabla_gemelo.csv` y `tabla_gemelo.tex`.
+7. Para todo con STOP o la tecla Esc.
 
-Para que la placa reconozca la misma postura al encender, calibra los encoders,
-coloca la pata en esa postura de reposo y usa **STOP TODO** y luego
-**Guardar pose de arranque** en `pata_dashboard.html`. Coloca la pata en la
-misma postura física antes de cada encendido porque los encoders son incrementales.
+**Limitación:** por USB solo se mandan objetivos punto a punto, porque `PREF` reinicia el perfil de velocidad. El seguimiento continuo con *feed-forward* existe solo por CAN (SEGUIR desde la maestra).
 
-Limitaciones:
-- **Por USB solo se pueden mandar objetivos punto a punto.** El comando `PREF` reinicia el perfil de velocidad, así que no sirve para seguir una trayectoria continua. Por eso las secuencias esperan a que las tres articulaciones lleguen (estado HOLD), o 8 s, antes de mandar el punto siguiente. El seguimiento continuo con *feed-forward* existe solo por CAN (SEGUIR, desde la maestra).
-- El modo simulado es un modelo cinemático simple, sin fricción ni gravedad, solo para practicar la interfaz. Para el comportamiento dinámico está `app.py`.
+### Geometría desde Fusion (MCP)
 
-El CSV grabado tiene las mismas columnas que el del dashboard de la pata, así que se carga tal cual en la pestaña *Datos reales* de `app.py`. Además trae `target_*_mm`, `foot_*_mm`, `foot_error_mm` y `seq_index`.
+`python fusion/actualizar_desde_fusion.py` lee la pata directamente de Fusion (con el documento abierto y el add-in MCP activo en `http://127.0.0.1:53157/mcp`). Solo usa scripts de lectura. Genera:
+- **`fusion/geometria_pata1_v2.json`:** los ejes, tomados de los cilindros de los bujes; el pie, como centro de la esfera de `TibiaPunta`; y el marco de la pata.
+- **`fusion/mallas_pata1_v2.npz`:** las mallas por eslabón.
 
+Después de actualizar, corre `python export_web_geometry.py` para refrescar la página web. La asignación de piezas a cada eslabón está al principio del script (`ESLABONES`): si agregas piezas en Fusion, añádelas ahí.
 ### 4. Tests (~1 s)
 
 ```powershell
@@ -105,16 +115,20 @@ Debería decir `29 passed`. Comprueban:
 | `trajectories.py` | Punto a punto, línea recta, círculo y ciclo de paso (apoyo + vuelo cicloidal) |
 | `experiments.py` | Ensayos estándar (escalones, verificación de la IK) |
 | `real_data.py` | Lector del CSV de la pata y comparación con la simulación |
-| `mesh_utils.py` | Carga y simplificación de las STL |
+| `mesh_utils.py` | Carga de las mallas de Fusion (y de las STL antiguas) |
 | `app.py`, `export_figures.py` | Dashboard y exportación de figuras |
-| `web/pata_ik_3d.html` | Dashboard en vivo con la pata real: Web Serial, vista 3D, IK, secuencias y CSV |
-| `export_web_geometry.py` → `web/geometria_pata1.js` | Geometría y vectores de prueba para la página web |
+| `web/pata_ik_3d.html` + `web/visor3d.js`, `web/gemelo.js`, `web/graficas.js` | Gemelo digital en vivo: Web Serial, vista 3D WebGL con las mallas de Fusion, gemelo de la cascada, gráficas, IK, secuencias y CSV |
+| `export_web_geometry.py` → `web/geometria_pata1.js`, `web/mallas_pata1.js` | Geometría, parámetros del gemelo, vectores de prueba y mallas para la página |
+| `figuras_gemelo.py` | Figuras de la tesis "real vs gemelo" desde el CSV de la página |
+| `fusion/actualizar_desde_fusion.py`, `fusion/fusion_mcp.py` | Lectura de la geometría y las mallas desde Fusion por MCP |
 
 ## Convenciones
 
 - **Ángulos:** `q_cad` (Fusion) = `signo · q_enc + offset`. La cinemática trabaja en `q_cad`; el control, en `q_enc`, igual que el firmware.
 - **Corrientes:** en **A equivalentes del sensado** (corriente real × ciclo de trabajo), como el firmware y la identificación. El par de la planta se expresa en esas mismas unidades: `Jeq·α = T − Ic·sign(ω) − b·ω − gravedad`.
-- **Posiciones:** en mm, en el marco raíz de Fusion.
+- **Posiciones:** en mm, en el **marco de la pata**: origen en el eje de la coxa (J0), Z = eje de la coxa hacia arriba, X = a lo largo de la pata estirada, Y = Z × X (paralelo a J1 y J2).
+- **Home:** q = 0, la pata estirada tal como está el ensamble de Fusion. Ahí J1 está en x = 50 mm, J2 en x = 110 mm (los dos a z = 6.05 mm) y el centro de la esfera del pie en (206.1, 0.1, −20.6) mm.
+- **Sentidos positivos** (los de Fusion): +q0 gira la coxa en sentido horario visto desde arriba (hacia −Y), +q1 sube el fémur y +q2 baja el pie.
 
 ## Modelo de la planta
 
@@ -147,8 +161,8 @@ m{k}_position_state, m{k}_current_status, m{k}_flags        (k = 1 coxa, 2 fému
 
 1. Ganancias vigentes: viven en la NVS. Copia la línea `CFG,Mx,...` de cada motor (comando `INFO`). Hoy se usan las del 14-nov.
 2. ILIMIT que envía el dashboard. Hoy se usa 0.1 A, el valor por defecto del firmware.
-3. Signo de la coxa y offsets entre el cero del encoder y el del CAD.
+3. Signo de la coxa. Los offsets son 0 porque la pata arranca estirada en la pose cero (requiere `NVS,POSE,CLEAR` en la placa).
 4. Límites mecánicos reales. Hoy se usan los rangos probados.
 5. Inductancia L, solo para el modelo físico.
 6. `a` (A/%) de la pata modificada: se usa el del 11-nov.
-7. STL de la versión `alfred_mejorado`: las actuales son del 4-nov y solo sirven como referencia visual. La de la tibia no coincide con la geometría nueva.
+7. En Fusion falta el joint coxa–fémur (J1); su eje se toma del buje. El joint de la tibia está 2.5 mm por debajo de sus bujes: se usa el eje físico de los bujes.

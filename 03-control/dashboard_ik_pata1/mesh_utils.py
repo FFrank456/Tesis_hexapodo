@@ -35,8 +35,22 @@ def simplify(tris, cell):
     return V, F[ok]
 
 
+LINKS = ("coxa", "femur", "tibia")
+
+
+def load_fusion_meshes(cfg):
+    """Mallas leídas de Fusion (fusion/mallas_pata1_v2.npz), en el marco de la pata, en metros.
+    Devuelve {"base": (V, F), "coxa": ..., "femur": ..., "tibia": ...}."""
+    path = resolve(cfg, cfg["geometria"]["mallas"])
+    d = np.load(path)
+    return {k: (d[f"{k}_V"].astype(float) / 1000, d[f"{k}_F"]) for k in ("base",) + LINKS if f"{k}_V" in d}
+
+
 def load_leg_meshes(cfg, kin):
-    """Lista de (V_cero_m (N,3), F) por eslabón, ya en la pose cero de la geometría actual."""
+    """Lista de (V_cero_m (N,3), F) por eslabón (coxa, fémur, tibia) en la pose cero."""
+    if "mallas" in cfg["geometria"]:
+        m = load_fusion_meshes(cfg)
+        return [m[k] for k in LINKS]
     g = cfg["geometria"]["mallas_stl"]
     folder = resolve(cfg, g["carpeta"])
     new_piv = [kin.p0, kin.p1, kin.p2]
