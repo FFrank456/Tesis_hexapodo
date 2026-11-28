@@ -136,22 +136,28 @@ La mayor dificultad del proyecto viene de **cómo funciona la capa física de CA
 
 ## 5. Hallazgos de la revisión por un ingeniero electrónico (informado)
 
-El autor llevó **una de las placas MOD_DRV** a un ingeniero electrónico para revisarla. Según su informe, el ingeniero encontró:
+El autor llevó **una de las placas MOD_DRV** a un ingeniero electrónico, que la revisó **por inspección visual**. El ingeniero señaló:
 
-- **pistas con soldaduras deficientes**;
-- **pads sin contacto eléctrico interno con algunos de los drivers** DRV8876: la soldadura se veía en la superficie, pero no había unión real con el pad del componente.
+1. **Componentes pequeños desplazados en el ensamblaje automático (*pick and place*).** Con componentes tan pequeños, durante la colocación y el reflujo a veces **se mueven de su posición** por la precisión que maneja el proceso. Uno de los ejemplos fue **un condensador**. Ocurre en raras ocasiones, pero ocurre, y un componente desplazado queda con **uno de sus extremos sin contacto o con contacto débil**.
+2. **Uniones con contacto interno intermitente.** Algunas soldaduras se ven bien por fuera, pero **no hacen buen contacto en el interior** de la unión. La conexión es **intermitente**: funciona y deja de funcionar con la vibración, el esfuerzo mecánico o la temperatura. Estas uniones necesitan **un repaso de estaño** (volver a fundir la soldadura con *flux* y estaño nuevo).
+3. **Una placa pequeña exige más cuidado en la soldadura.** Como la placa es compacta, la soldadura debe considerar **las distintas corrientes que circulan** (lógica de 3,3 V frente a la potencia de los motores, que llega a ~1 A por driver) y **las características de cada componente**: el tamaño del pad, el pad térmico y la masa de cobre alrededor, que cambia cuánto calor necesita cada unión.
 
 **Relación con lo medido:**
-- El DRV8876PWPR viene en **HTSSOP-16 con pad térmico expuesto (PowerPAD) debajo del chip**. Ese pad es GND y disipa el calor. **No se ve ni se alcanza con el cautín**, así que una soldadura deficiente ahí solo se detecta con medidas eléctricas o con rayos X.
-- Un pad del driver sin unión real explica el **nFAULT de la coxa que aparece solo con V_MOT** (F10). El driver detecta subtensión o una falla de su bomba de carga.
-- Pistas y uniones mal soldadas explican las **fallas intermitentes** de la comunicación: la unión de IO22 que se abría al mover la placa (F1), y las placas que funcionaron solo después de repasar las soldaduras (F3).
+- **Componente desplazado:** coincide con el **nFAULT de la coxa que aparece solo con V_MOT** (F10). La causa más probable es la bomba de carga del DRVA, formada por los condensadores **C3A (0,1 µF) y C4A (22 nF)**, ambos de encapsulado **0402** (1,0 × 0,5 mm). Si uno de ellos se desplazó y no hace contacto, el driver queda en falla mientras tenga alimentación.
+- **Contacto interno intermitente:** explica las **fallas que aparecían y desaparecían** al manipular las placas:
+  - la unión de IO22 que se resoldó y **se volvió a abrir al mover la placa** (F1);
+  - las placas 1 y 2, que funcionaron **después de repasarlas con *flux* y estaño** (F3), justo la reparación que indicó el ingeniero;
+  - el VCC del módulo de la placa 6 (F6);
+  - el bus que funcionaba completo un día y se bloqueaba al siguiente.
+- **Pads ocultos:** el DRV8876PWPR viene en **HTSSOP-16 con un pad térmico (PowerPAD) debajo del chip**, que es GND y disipa el calor. **No se ve en una inspección visual**, así que una unión deficiente ahí solo se detecta con medidas eléctricas o con rayos X.
 
-> [!todo] Completar este registro
-> - Fecha de la revisión y nombre o cargo del ingeniero (si se puede citar).
-> - **Qué placa** se revisó: MAC o ID de pata.
-> - **Qué drivers** (DRVA, DRVB o DRVC) y qué pads o pistas tenían el defecto.
-> - Fotos de la inspección en `05-documentacion/adjuntos/` y enlace aquí.
-> - Qué se reparó y si se volvió a probar.
+**Por qué esto justifica las fallas del bus:** los defectos son **poco frecuentes por componente**, pero cada MOD_DRV tiene 88 componentes y el bus depende de siete nodos. Basta **una unión intermitente en una sola placa** para bloquear la comunicación de todas (sección 2). Además, una inspección visual no siempre la detecta, porque la unión puede verse bien por fuera.
+
+> [!todo] Datos por agregar si están disponibles
+> - Fecha de la revisión y **qué placa** se revisó (MAC o ID de pata).
+> - Qué componentes concretos marcó el ingeniero (el condensador desplazado y las uniones a repasar).
+> - Fotos en `05-documentacion/adjuntos/`.
+> - Si se hizo el repaso de estaño y el resultado de la prueba posterior.
 
 ---
 
@@ -159,17 +165,22 @@ El autor llevó **una de las placas MOD_DRV** a un ingeniero electrónico para r
 
 La MOD_DRV tiene 88 componentes en una placa compacta, con encapsulados muy pequeños. La tabla sale del archivo *Pick Place* de Altium (`Pick Place for MOD_DRV.csv`).
 
-| Componente | Encapsulado | Tamaño o paso | Por qué es difícil a mano | Falla relacionada |
+| Componente | Encapsulado | Tamaño o paso | Riesgo en el ensamblaje y la reparación | Falla relacionada |
 |---|---|---|---|---|
 | DRV8876PWPR (DRVA–DRVC) | **HTSSOP-16 con PowerPAD** | Paso de **0,65 mm**, pad térmico inaccesible debajo del chip | Puentes entre pines vecinos. El pad térmico necesita aire caliente o horno; con cautín no se ve si soldó | F10 y el hallazgo del ingeniero |
-| C3A–C3C (0,1 µF, bomba de carga), C4A–C4C (22 nF), C23, C25, C30, R14 | **0402** | **1,0 × 0,5 mm** | Se levantan (*tombstoning*), se pierden o quedan con un solo extremo soldado; casi no se distinguen a simple vista | F10 (bomba de carga del DRVA) |
+| C3A–C3C (0,1 µF, bomba de carga), C4A–C4C (22 nF), C23, C25, C30, R14 | **0402** | **1,0 × 0,5 mm** | **Se desplazan** en el *pick and place* o en el reflujo, se levantan (*tombstoning*) o quedan con un solo extremo soldado; casi no se distinguen a simple vista | F10 (bomba de carga del DRVA) |
 | CP2102N (U2) | **QFN-28** con pad expuesto | Paso de **0,5 mm**, sin patas visibles | Las uniones quedan debajo del chip | — (el USB funcionó en el *bring-up*) |
 | ESP32-WROOM-32E (MD1) | Módulo con pads almenados | Paso de 1,27 mm, 38 pads | Uniones pequeñas en el borde. Un pad mal soldado se abre con el esfuerzo mecánico | **F1: pin 36 (IO22) abierto** |
 | Zócalo J4 + módulo WCMCU-230 | Tira Samtec de 2,54 mm + módulo con un SOIC-8 | — | El módulo queda soldado sobre el zócalo. Un pin sin estaño (VCC, CRX) **no se ve** y deja el transceptor sin alimentación o sin señal | **F6 (VCC abierto → transceptor dañado)**, F1 |
 | AP63205 (U1), TLV75733 (U3) | TSOT-23-6, SOT-23-5 | Paso de 0,95 mm | Moderada | — |
 | Resto de pasivos | 0603, 0805, 1206 | — | Manejables a mano | — |
 
-**Conclusión:** el diseño (DRC del 18-oct con 0 violaciones) es correcto. Pero **soldar a mano encapsulados de 0,5–0,65 mm de paso, pads térmicos ocultos y pasivos 0402** deja uniones defectuosas que **no se pueden inspeccionar visualmente**. Esas uniones aparecen como **fallas intermitentes**: funcionan en una prueba y fallan al mover la placa o al calentarse. Es la explicación más consistente de por qué el bus completo funcionó (26-nov: 71 928/71 928) y al día siguiente volvió a bloquearse por un solo nodo (placa 6).
+**Conclusión:** el diseño (DRC del 18-oct con 0 violaciones) es correcto. Pero con **encapsulados de 0,5–0,65 mm de paso, pads térmicos ocultos y pasivos 0402**:
+- el ensamblaje automático puede **desplazar componentes**, en raras ocasiones;
+- las reparaciones a mano (resoldar J4, el módulo o IO22) son delicadas;
+- quedan **uniones defectuosas que no siempre se detectan por inspección visual** (sección 5).
+
+ Esas uniones aparecen como **fallas intermitentes**: funcionan en una prueba y fallan al mover la placa o al calentarse. Es la explicación más consistente de por qué el bus completo funcionó (26-nov: 71 928/71 928) y al día siguiente volvió a bloquearse por un solo nodo (placa 6).
 
 ---
 
@@ -228,9 +239,10 @@ La MOD_DRV tiene 88 componentes en una placa compacta, con encapsulados muy pequ
 2. **Transceptor con protección contra dominante permanente** (*TXD dominant time-out*), por ejemplo de la familia TCAN104x. Si CTX queda en 0, el transceptor suelta el bus solo y el nodo defectuoso no bloquea a los demás.
 3. **Protección ESD en CANH y CANL** y **terminación de 120 Ω seleccionable con un puente** en cada placa.
 4. **Puntos de prueba** en CTX, CRX, VCC del transceptor, VCP y VM de cada driver: se mide sin tocar las patas de los chips.
-5. Pasivos de **0603 en lugar de 0402** donde el espacio lo permita.
-6. **Ensamblaje con esténcil y horno** (o encargarlo al fabricante) para los HTSSOP con PowerPAD y el QFN, con inspección del pad térmico.
-7. **Conectores con traba** para el bus (en lugar de tiras de pines rectas) y un GND del bus en cada conector.
+5. Pasivos de **0603 en lugar de 0402** donde el espacio lo permita: se desplazan menos en el ensamblaje y se reparan más fácil.
+6. **Pedir al ensamblador inspección óptica automática (AOI)**, y de rayos X para los HTSSOP con PowerPAD y el QFN. Al recibir las placas, **repasar con estaño** las uniones críticas: el transceptor, J4, IO21 e IO22, y la bomba de carga de cada driver.
+7. **Pads y vías térmicas pensados para el reflujo:** pads simétricos en los pasivos pequeños (reducen el desplazamiento y el *tombstoning*) y alivios térmicos donde un pad conecta a un plano de cobre grande, porque la potencia de los motores exige pistas anchas cerca de componentes de lógica.
+8. **Conectores con traba** para el bus (en lugar de tiras de pines rectas) y un GND del bus en cada conector.
 
 ---
 
