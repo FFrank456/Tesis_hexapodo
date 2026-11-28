@@ -44,7 +44,44 @@ python app.py
 - **Datos reales:** sube un CSV del dashboard de la pata. Se simula la misma secuencia de objetivos y se superpone.
 - **Si el puerto está ocupado:** cambia `port=8050` al final de `app.py`.
 
-### 3. Tests (~1 s)
+La vista de cinemática, la simulación de trayectorias y el modo simulado web
+arrancan en `simulacion.postura_inicial_cad_rad` de `config.yaml`. En esa
+postura el fémur está horizontal y la tibia queda casi alineada con él.
+
+### 3. Dashboard en vivo con la pata real: `web/pata_ik_3d.html`
+
+Página web que **se conecta a la pata por USB (Web Serial)**. Hace cuatro cosas:
+- dibuja en 3D la pata real con los ángulos de los encoders, la referencia del firmware y el objetivo;
+- mueve el pie a una posición x, y, z con la cinemática inversa;
+- corre secuencias de puntos (punto a punto, círculo y ciclo de paso);
+- graba un CSV con el error del pie en mm.
+
+No usa internet ni librerías externas. La geometría está en `web/geometria_pata1.js`. Si cambias `config.yaml`, regenérala con `python export_web_geometry.py`.
+
+Pasos:
+
+1. **Cierra el dashboard de la pata (`pata_dashboard.html`) y cualquier monitor serie.** Solo un programa puede tener el puerto abierto.
+2. **Abre `web/pata_ik_3d.html` en Chrome o Edge,** con doble clic o arrastrándolo al navegador. Arriba debe aparecer en verde *modelo OK*: el modelo del navegador coincide con el de Python.
+3. **Practica primero con *Modo simulado*,** sin la pata: es un ESP32 falso que responde a los mismos comandos.
+4. **Pulsa *Conectar a la pata*** y elige el puerto (COM6 o COM16). En ~1 s la pata azul se mueve igual que la real.
+   - **Si el dibujo no coincide con la pata real** (una articulación gira al revés o está desplazada), corrige el signo o el offset en *Mapeo encoder → CAD*.
+   - O pon la pata en la pose cero del CAD (fémur horizontal, tibia como en el modelo) y pulsa *La pata está en la pose cero del CAD*.
+5. **Mueve el pie** con los botones ±5 mm o escribiendo x, y, z. La pata naranja muestra la solución antes de enviarla. Pulsa *Enviar a la pata*: manda `Mx,PREF` y, si hace falta, `Mx,MODE,POSITION` a las tres articulaciones.
+6. **Corre una secuencia:** elige una en *Secuencias de prueba* y pulsa *Iniciar*. Al terminar se descarga el CSV con el error al llegar a cada punto.
+7. **Para todo con STOP o la tecla Esc.**
+
+Para que la placa reconozca la misma postura al encender, calibra los encoders,
+coloca la pata en esa postura de reposo y usa **STOP TODO** y luego
+**Guardar pose de arranque** en `pata_dashboard.html`. Coloca la pata en la
+misma postura física antes de cada encendido porque los encoders son incrementales.
+
+Limitaciones:
+- **Por USB solo se pueden mandar objetivos punto a punto.** El comando `PREF` reinicia el perfil de velocidad, así que no sirve para seguir una trayectoria continua. Por eso las secuencias esperan a que las tres articulaciones lleguen (estado HOLD), o 8 s, antes de mandar el punto siguiente. El seguimiento continuo con *feed-forward* existe solo por CAN (SEGUIR, desde la maestra).
+- El modo simulado es un modelo cinemático simple, sin fricción ni gravedad, solo para practicar la interfaz. Para el comportamiento dinámico está `app.py`.
+
+El CSV grabado tiene las mismas columnas que el del dashboard de la pata, así que se carga tal cual en la pestaña *Datos reales* de `app.py`. Además trae `target_*_mm`, `foot_*_mm`, `foot_error_mm` y `seq_index`.
+
+### 4. Tests (~1 s)
 
 ```powershell
 python -m pytest -q tests
@@ -70,6 +107,8 @@ Debería decir `29 passed`. Comprueban:
 | `real_data.py` | Lector del CSV de la pata y comparación con la simulación |
 | `mesh_utils.py` | Carga y simplificación de las STL |
 | `app.py`, `export_figures.py` | Dashboard y exportación de figuras |
+| `web/pata_ik_3d.html` | Dashboard en vivo con la pata real: Web Serial, vista 3D, IK, secuencias y CSV |
+| `export_web_geometry.py` → `web/geometria_pata1.js` | Geometría y vectores de prueba para la página web |
 
 ## Convenciones
 

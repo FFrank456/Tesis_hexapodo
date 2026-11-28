@@ -7,7 +7,7 @@ Ejes locales de la pata (en el marco raíz de Fusion):
 """
 import numpy as np
 
-from cascade_control import simulate
+from cascade_control import SimResult, simulate
 from kinematics import LegKinematics, rot
 
 
@@ -114,17 +114,25 @@ def run(cfg, kin, name):
     traj = build(cfg, kin, name)
     q_cad = joint_reference(kin, traj)
     q_enc = kin.cad_to_enc(q_cad)
+    q_start_enc = kin.cad_to_enc(cfg["simulacion"]["postura_inicial_cad_rad"])
     t_ref = traj["t"]
     dur = t_ref[-1] + (cfg["trayectorias"]["espera_final_s"] if traj["tipo"] == "escalones" else 0.0)
+    # Aproximación: desde la postura inicial, la pata va primero (IR_A) al primer punto de la
+    # trayectoria. Esa fase no cuenta en las métricas: el error mide el seguimiento.
+    t_ap = float(cfg["trayectorias"].get("aproximacion_s", 0.0))
 
     def sample(t):
-        i = min(int(t / 0.02 + 1e-9), len(t_ref) - 1)
+        if t < t_ap:
+            return q_enc[0]
+        i = min(int((t - t_ap) / 0.02 + 1e-9), len(t_ref) - 1)
         return q_enc[i]
 
     if traj["tipo"] == "escalones":
-        res = simulate(cfg, dur, q_enc[0], ref=sample)
+        full = simulate(cfg, dur + t_ap, q_start_enc, ref=sample)
     else:
-        res = simulate(cfg, dur, q_enc[0], follow=sample)
+        full = simulate(cfg, dur + t_ap, q_start_enc, follow=sample)
+    keep = full.t >= t_ap - 1e-9
+    res = SimResult(full.t[keep] - full.t[keep][0], {k: v[keep] for k, v in full.data.items()})
     t = res.t
     idx = np.minimum(np.floor(t / 0.02 + 1e-9).astype(int), len(t_ref) - 1)
     p_des = traj["p"][idx]
@@ -133,7 +141,9 @@ def run(cfg, kin, name):
     p_sim = kin.fk(q_sim_cad)
     err = p_sim - p_des
     return {"name": name, "traj": traj, "t": t, "p_des": p_des, "p_sim": p_sim, "err": err,
-            "q_des_cad": q_des_cad, "q_sim_cad": q_sim_cad, "res": res, "T": traj["T"]}
+            "q_des_cad": q_des_cad, "q_sim_cad": q_sim_cad, "res": res, "T": traj["T"],
+            "aproximacion": {"t_s": t_ap, "error_inicial_mm": float(np.linalg.norm(err[0]) * 1000),
+                             "t_completo": full.t, "q_completo_cad": kin.enc_to_cad(full["q"])}}
 
 
 def cartesian_metrics(out, cfg):

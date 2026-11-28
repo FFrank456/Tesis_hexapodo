@@ -133,6 +133,9 @@ control:
 
 simulacion:
   dt_planta_s: 2.0e-4
+  # Arranque común del dashboard y de la simulación (coxa, fémur, tibia en CAD).
+  # Fémur horizontal y tibia casi alineada con él, con 3° de flexión.
+  postura_inicial_cad_rad: [0.0, 0.0, -0.24]
 
 trayectorias:
   # Postura central (q_cad, rad). Debe quedar dentro de los límites.
@@ -156,6 +159,9 @@ trayectorias:
     factor_apoyo: 0.5
     ciclos: 3
   espera_final_s: 1.0
+  # Tiempo para ir de postura_inicial_cad_rad al primer punto (IR_A) antes de empezar la
+  # trayectoria. No cuenta en las métricas de error.
+  aproximacion_s: 5.0
 
 figuras:
   carpeta: figures

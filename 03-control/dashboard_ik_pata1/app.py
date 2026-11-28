@@ -65,10 +65,11 @@ def steps():
 
 # ------------------------------------------------------------------ layout
 lim = KIN.lim_cad
+q_start_cad = np.array(CFG["simulacion"]["postura_inicial_cad_rad"])
 slider = lambda k: dcc.Slider(id=f"q{k}", min=float(np.degrees(lim[k, 0])), max=float(np.degrees(lim[k, 1])),
-                              step=0.5, value=round(float(np.degrees(np.array(CFG["trayectorias"]["postura_central_cad_rad"])[k])), 1),
+                              step=0.5, value=float(np.degrees(q_start_cad[k])),
                               marks=None, tooltip={"placement": "bottom", "always_visible": True})
-p_c = mm(KIN.fk(np.array(CFG["trayectorias"]["postura_central_cad_rad"])))
+p_start = mm(KIN.fk(q_start_cad))
 
 app = Dash(__name__, title="IK y cascada · Pata 1")
 app.layout = html.Div(style={"fontFamily": "Segoe UI, sans-serif", "maxWidth": "1400px", "margin": "auto"}, children=[
@@ -80,7 +81,7 @@ app.layout = html.Div(style={"fontFamily": "Segoe UI, sans-serif", "maxWidth": "
                 *[html.Div([html.Label(n), slider(k)]) for k, n in enumerate(JN)],
                 html.H4("Inversa: objetivo del pie (mm)"),
                 *[dcc.Input(id=f"p{a}", type="number", value=round(float(v), 1), step=1, style={"width": "30%"})
-                  for a, v in zip("xyz", p_c)],
+                  for a, v in zip("xyz", p_start)],
                 html.Button("Resolver IK", id="ik_btn", style={"marginTop": "8px"}),
                 html.Pre(id="ik_out", style={"background": "#f5f5f3", "padding": "8px"}),
                 dcc.Checklist(id="mesh_on", options=[{"label": " mostrar mallas STL (versión 4-nov)", "value": "m"}],
