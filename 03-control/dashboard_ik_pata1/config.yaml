@@ -1,0 +1,167 @@
+# Configuración del dashboard de cinemática inversa y control en cascada · Pata 1, Unidad 2
+#
+# Cada dato lleva su fuente. "TODO" = no se encontró en el repositorio: el valor es
+# provisional y conviene confirmarlo. Las rutas son relativas a esta carpeta.
+#
+# Marcos y ángulos
+#   - q_cad: ángulos de mando de Fusion (ROBOT_ESAMBLE_alfred_mejorado), en rad.
+#   - q_enc: ángulos del encoder del firmware, en rad.
+#   - q_cad = signo * q_enc + offset   (por articulación)
+
+geometria:
+  # Medición del ensamble con la API de Fusion (MedirPataU2.py).
+  medicion_fusion: ../../01-mecanica/cinematica-directa-pata/medicion_fusion_u2.json
+  # Punto del pie: el más bajo de la malla soporte_tibia_A en q = 0 (README de cinemática, línea 27).
+  cuerpo_pie: soporte_tibia_A
+  # Mallas STL de la exportación del 4-nov (versión ANTERIOR a alfred_mejorado).
+  # Se usan solo como referencia visual; la cinemática sale de la medición de arriba.
+  mallas_stl:
+    carpeta: ../../01-mecanica/urdf/ROBOT_ESAMBLE_description-20261104T154508Z-1-001/ROBOT_ESAMBLE_description/meshes
+    archivos: [pata_1_coxa_link_1.stl, pata_1_femur_link_1.stl, pata_1_tibia_link_1.stl]
+    # Origen de cada articulación en esa exportación (mm, marco raíz), ROBOT_ESAMBLE.xacro:406-424.
+    origen_articulacion_mm:
+      - [92.660, 39.416, -6.653]
+      - [128.015, 4.061, -6.653]
+      - [170.088, -38.719, -6.653]
+    tamano_celda_mm: 1.2     # simplificación por agrupamiento de vértices (solo para dibujar)
+
+articulaciones:
+  nombres: [Coxa, Fémur, Tibia]
+  # Fémur: el encoder positivo BAJA el fémur (identificacion_pata_modificada_2026-11-19.md:33)
+  # y en Fusion J1 positivo lo SUBE (README cinemática, línea 11) -> signo -1.
+  # Tibia: encoder positivo baja la tibia; en Fusion J2 positivo baja el pie -> signo +1.
+  # TODO: signo de la coxa sin comprobar (se supone +1).
+  signo_encoder_a_cad: [1, -1, 1]
+  # TODO: relación entre el cero del encoder y el cero del CAD. Se supone que la pose de
+  # arranque es la pose cero del CAD (propuesta de identificacion_..._2026-11-19.md:73).
+  offset_cad_rad: [0.0, 0.0, 0.0]
+  # TODO: límites mecánicos reales. Provisional = rangos probados en la pata (marco del encoder):
+  #   coxa  -0.5…1.5   (pata_MOD_DRV/CLAUDE.md:83)
+  #   fémur ±1.04      (grilla de la calibración del 20-nov, identificacion…:57)
+  #   tibia ±1.4       (prueba del 20-nov, identificacion…:66; topes cerca de ±1.75)
+  limites_encoder_rad:
+    - [-0.5, 1.5]
+    - [-1.04, 1.04]
+    - [-1.4, 1.4]
+
+cinematica_inversa:
+  # Rama del codo. -1 = la misma rama de la pose cero (rodilla hacia arriba).
+  rama_codo: -1
+  umbral_singularidad: 0.02     # |sin(ángulo relativo fémur–tibia)| por debajo de esto = cerca de singular
+  tolerancia_fk_ik_m: 1.0e-6
+
+motor:
+  # Pololu HPCB 12 V 100:1 (02-electronica/notas/Modulo de control de extremidad…:404):
+  # 330 RPM, 80 mA en vacío, 0.75 A bloqueado, 1.3 kg·cm.
+  tension_v: 12.0
+  r_ohm: 16.0          # derivado de catálogo: 12 V / 0.75 A
+  ke_v_s_rad: 0.31     # derivado de catálogo, a la salida: (12 - 0.08*16) / (330 rpm en rad/s)
+  kt_nm_a: 0.17        # derivado de catálogo, a la salida: 1.3 kg·cm / 0.75 A
+  l_h: 1.0e-3          # TODO: inductancia no medida. Solo afecta al modelo físico (L/R << 1 ms).
+  reduccion: 100
+  # Encoder: 7 PPR x 4 x 100 = 2800 cuentas por vuelta de salida (encoder.h:16-20). Escala SIN VERIFICAR.
+  pulsos_por_vuelta_motor: 7
+  factor_cuadratura: 4
+
+planta:
+  # identificado (por defecto): corriente sensada = a·(PWM - zona muerta), 1er orden tau_e.
+  #   Es el modelo con el que se diseñaron las ganancias (reporte_control_cascada.md:39-48).
+  # fisico: RL con fuerza contraelectromotriz y R, Ke de catálogo; sensado = i·ciclo.
+  modelo: identificado
+  tau_e_s: 2.0e-4            # reporte_control_cascada.md:48
+  zona_muerta_pct: 20.0      # reporte_control_cascada.md:39
+  # Par expresado en A equivalentes del sensado (convención de la identificación):
+  #   I = Jeq·α + Ic·sign(ω) + b·ω + gravedad
+  # a (A/%): reporte_control_cascada.md:35-37 (11-nov). TODO: la identificación del 19-nov no da 'a'.
+  a_a_por_pct: [0.00292, 0.00268, 0.00318]
+  # Jeq, Ic, b: identificacion_pata_modificada_2026-11-19.md:21-23 (fémur con la tibia en 0).
+  # b negativa (Stribeck) en coxa y tibia -> 0, como recomienda el mismo documento (línea 32).
+  jeq_a_s2_rad: [0.00131, 0.00164, 0.00105]
+  ic_a: [0.0604, 0.0123, 0.0130]
+  b_a_s_rad: [0.0, 0.0141, 0.0]
+  # Fricción estática (despegue). Estimada por identificar_articulacion.m (Is de FRICI sugerido),
+  # identificacion…:27. Fémur: valor de la postura "tibia en 0".
+  is_a: [0.1207, 0.0363, 0.0334]
+  # Freno (IN1 = IN2 = 1): par de cortocircuito -Ke/R·ω (derivado de catálogo).
+  b_freno_a_s_rad: 0.0194
+  # Gravedad de la planta = la calibrada el 20-nov (identificacion…:58-60) por este factor.
+  # 1.0 = compensación perfecta; cambia el factor para estudiar errores de modelo.
+  factor_gravedad_planta: 1.0
+
+control:
+  # Frecuencias (main.c:60,66; speed_pi.h:8; position_pi.h:6; encoder.h:25)
+  pwm_hz: 10000
+  periodo_corriente_s: 0.001
+  periodo_velocidad_s: 0.010
+  periodo_posicion_s: 0.020
+  ventana_velocidad_s: 0.020
+  retardo_lazo_velocidad_s: 0.019    # pata_MOD_DRV/CLAUDE.md:41
+  retardo_lazo_posicion_s: 0.010     # reporte_control_cascada.md:23
+  # Ganancias. TODO: las vigentes viven en la NVS de la placa. Estas son las del 14-nov
+  # (pata_MOD_DRV/CLAUDE.md:99-101). Confírmalas con la línea CFG,Mx,... de cada motor.
+  pid_kp: [16.03, 17.47, 14.72]          # %/A
+  pid_ki: [80162.0, 87340.0, 73607.0]    # %/(A·s)
+  spi_kp: [0.00547, 0.0185, 0.00956]     # A/(rad/s)
+  spi_ki: [0.0480, 0.1072, 0.1044]       # A/rad
+  ppi_kp: [2.084, 2.971, 1.772]          # (rad/s)/rad
+  ppi_ki: [0.0, 0.0, 0.0]
+  # Límites. PWM 0…100 % (main.c:72-73). ILIMIT por defecto 0.1 A (speed_pi.h:11).
+  # TODO: el ILIMIT que envía el dashboard no está en el repositorio.
+  pwm_min_pct: [0.0, 0.0, 0.0]
+  pwm_max_pct: [100.0, 100.0, 100.0]
+  ilimit_a: [0.1, 0.1, 0.1]
+  # PLIMIT por defecto (main.c:2489): vmax 2 rad/s, aceleración 5 rad/s², tolerancia 0.02 rad.
+  vmax_rad_s: [2.0, 2.0, 2.0]
+  acel_rad_s2: [5.0, 5.0, 5.0]
+  tolerancia_rad: [0.02, 0.02, 0.02]
+  freno_en_hold: true                    # HOLD,BRAKE (por defecto, main.c:2505)
+  # Compensaciones (sumadas a la referencia de corriente)
+  # FRICI sugeridos el 19-nov (identificacion…:27); fémur Is = 0.07 (identificacion…:42-43).
+  frici_ic_a: [0.0483, 0.0149, 0.0104]
+  frici_is_a: [0.1207, 0.07, 0.0334]
+  fricb_inicio: [1, 1, 1]                # FRICB por defecto 1, 200 ms (pata_MOD_DRV/CLAUDE.md:63)
+  fricb_rampa_s: [0.2, 0.2, 0.2]
+  dither_pct: [10.0, 10.0, 10.0]         # 10 % a 80 Hz (pruebas del 20-nov, identificacion…:63-66)
+  dither_hz: [80.0, 80.0, 80.0]
+  # Gravedad: lista de términos G·cos(θ + c·θ[motor] + θ0). motor = índice 0..2 o null.
+  # Calibración del 20-nov (identificacion…:58-60).
+  gravedad:
+    - []
+    - [{g: 0.0677, theta0: -3.100, motor: null, c: 0.0},
+       {g: 0.0102, theta0: -2.968, motor: 2, c: 1.0}]
+    - [{g: 0.0102, theta0: -2.968, motor: 1, c: 1.0}]
+
+simulacion:
+  dt_planta_s: 2.0e-4
+
+trayectorias:
+  # Postura central (q_cad, rad). Debe quedar dentro de los límites.
+  postura_central_cad_rad: [0.5, 0.25, 0.8]
+  punto_a_punto:
+    # (avance, lateral, vertical) en mm. Lateral positivo = hacia afuera (la pata ya está casi estirada).
+    desplazamientos_mm: [[0, 0, 0], [25, 0, 0], [25, 0, -20], [0, -20, -20], [0, 0, 0]]
+    permanencia_s: 3.0
+  linea:
+    desplazamiento_mm: [40.0, 0.0, -15.0]    # en (avance, lateral, vertical)
+    duracion_s: 2.0
+    idas_y_vueltas: 2
+  circulo:
+    radio_mm: 20.0
+    periodo_s: 4.0
+    vueltas: 2
+  ciclo_paso:
+    largo_paso_mm: 40.0
+    altura_mm: 20.0
+    periodo_s: 2.0
+    factor_apoyo: 0.5
+    ciclos: 3
+  espera_final_s: 1.0
+
+figuras:
+  carpeta: figures
+  dpi: 300
+
+datos_reales:
+  # CSV del dashboard (pata_dashboard.html). Formato en el README.
+  csv: ../pata_MOD_DRV/matlab/datos/femur_prueba_ganancias (2).csv
+  motor: 2           # 1 = coxa, 2 = fémur, 3 = tibia

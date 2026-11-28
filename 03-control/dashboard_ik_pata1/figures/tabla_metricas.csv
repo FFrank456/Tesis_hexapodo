@@ -1,0 +1,107 @@
+﻿grupo,elemento,metrica,valor,unidad
+Verificación de la cinemática inversa,FK(IK(p)),error máximo,4.928080417233778e-16,m
+Verificación de la cinemática inversa,FK(IK(p)),muestras,29791,
+Verificación de la cinemática inversa,Caja cartesiana,con solución dentro de límites,2542,
+Verificación de la cinemática inversa,Caja cartesiana,solución fuera de límites,8563,
+Verificación de la cinemática inversa,Caja cartesiana,fuera del alcance,8893,
+Error de posición del efector final,Punto a punto,RMSE,3.1763237083095324,mm
+Error de posición del efector final,Punto a punto,error máximo,4.777629194603129,mm
+Error de posición del efector final,Punto a punto,error permanente,4.777629194603129,mm
+Error angular máximo por articulación,Punto a punto,Coxa,8.207727372196771,°
+Error angular máximo por articulación,Punto a punto,Fémur,20.09491751964174,°
+Error angular máximo por articulación,Punto a punto,Tibia,28.10153646405474,°
+Error de posición del efector final,Línea recta,RMSE,7.336671702058322,mm
+Error de posición del efector final,Línea recta,error máximo,12.524950339415527,mm
+Error de posición del efector final,Línea recta,error permanente,2.7564240281651395,mm
+Error angular máximo por articulación,Línea recta,Coxa,3.723012544224501,°
+Error angular máximo por articulación,Línea recta,Fémur,4.713585681495767,°
+Error angular máximo por articulación,Línea recta,Tibia,5.838475201166426,°
+Error de posición del efector final,Círculo,RMSE,8.616333327510153,mm
+Error de posición del efector final,Círculo,error máximo,17.083433637838198,mm
+Error de posición del efector final,Círculo,error permanente,3.4028590395648313,mm
+Error angular máximo por articulación,Círculo,Coxa,3.640775539463861,°
+Error angular máximo por articulación,Círculo,Fémur,7.56333717456282,°
+Error angular máximo por articulación,Círculo,Tibia,7.2645477423192775,°
+Error de posición del efector final,Ciclo de paso,RMSE,12.992966523706095,mm
+Error de posición del efector final,Ciclo de paso,error máximo,22.94486394201413,mm
+Error de posición del efector final,Ciclo de paso,error permanente,3.120761482561159,mm
+Error angular máximo por articulación,Ciclo de paso,Coxa,5.763158724776427,°
+Error angular máximo por articulación,Ciclo de paso,Fémur,9.654149904716673,°
+Error angular máximo por articulación,Ciclo de paso,Tibia,8.86258003982036,°
+Respuesta al escalón · lazo de corriente,Coxa,tr,0.007999999999999993,s
+Respuesta al escalón · lazo de corriente,Coxa,Mp,0.0,%
+Respuesta al escalón · lazo de corriente,Coxa,ts,0.013999999999999999,s
+Respuesta al escalón · lazo de corriente,Coxa,ess,2.0816681711721685e-17,A
+Lazo de corriente · análisis lineal,Coxa,ancho de banda,60.51888883070947,Hz
+Lazo de corriente · análisis lineal,Coxa,cruce,37.48754011242824,Hz
+Lazo de corriente · análisis lineal,Coxa,margen de fase,72.32326559429816,°
+Respuesta al escalón · lazo de velocidad,Coxa,tr,0.026999999999999996,s
+Respuesta al escalón · lazo de velocidad,Coxa,Mp,25.667653684733448,%
+Respuesta al escalón · lazo de velocidad,Coxa,ts,nan,s
+Respuesta al escalón · lazo de velocidad,Coxa,ess,0.050276229418048546,rad/s
+Lazo de velocidad · análisis lineal,Coxa,ancho de banda,1.7681689582471303,Hz
+Lazo de velocidad · análisis lineal,Coxa,cruce,1.0817254772904317,Hz
+Lazo de velocidad · análisis lineal,Coxa,margen de fase,28.696601423608485,°
+Respuesta al escalón · lazo de posición,Coxa,tr,1.032,s
+Respuesta al escalón · lazo de posición,Coxa,Mp,0.0,%
+Respuesta al escalón · lazo de posición,Coxa,ts,1.484,s
+Respuesta al escalón · lazo de posición,Coxa,ess,0.011491871633405037,rad
+Lazo de posición · análisis lineal,Coxa,ancho de banda,0.46712672794772225,Hz
+Lazo de posición · análisis lineal,Coxa,cruce,0.39246135454749376,Hz
+Lazo de posición · análisis lineal,Coxa,margen de fase,86.25784658786375,°
+Separación de frecuencias,Coxa,corriente/velocidad,34.226869863559145,×
+Separación de frecuencias,Coxa,velocidad/posición,3.7852018573533908,×
+Saturación durante el ciclo de paso,Coxa,PWM saturado,0.0,%
+Saturación durante el ciclo de paso,Coxa,ILIMIT alcanzado,10.2,%
+Respuesta al escalón · lazo de corriente,Fémur,tr,0.007999999999999993,s
+Respuesta al escalón · lazo de corriente,Fémur,Mp,0.0,%
+Respuesta al escalón · lazo de corriente,Fémur,ts,0.013999999999999999,s
+Respuesta al escalón · lazo de corriente,Fémur,ess,2.0816681711721685e-17,A
+Lazo de corriente · análisis lineal,Fémur,ancho de banda,60.51888883070947,Hz
+Lazo de corriente · análisis lineal,Fémur,cruce,37.48754011242824,Hz
+Lazo de corriente · análisis lineal,Fémur,margen de fase,72.32396285908709,°
+Respuesta al escalón · lazo de velocidad,Fémur,tr,0.022999999999999993,s
+Respuesta al escalón · lazo de velocidad,Fémur,Mp,17.37498676556546,%
+Respuesta al escalón · lazo de velocidad,Fémur,ts,nan,s
+Respuesta al escalón · lazo de velocidad,Fémur,ess,0.006841884390826447,rad/s
+Lazo de velocidad · análisis lineal,Fémur,ancho de banda,1.7140244334384556,Hz
+Lazo de velocidad · análisis lineal,Fémur,cruce,1.5613373479665753,Hz
+Lazo de velocidad · análisis lineal,Fémur,margen de fase,87.58139617275941,°
+Respuesta al escalón · lazo de posición,Fémur,tr,0.6759999999999999,s
+Respuesta al escalón · lazo de posición,Fémur,Mp,0.0,%
+Respuesta al escalón · lazo de posición,Fémur,ts,0.8860000000000001,s
+Respuesta al escalón · lazo de posición,Fémur,ess,0.013468369540222347,rad
+Lazo de posición · análisis lineal,Fémur,ancho de banda,0.6455129398325276,Hz
+Lazo de posición · análisis lineal,Fémur,cruce,0.4362343500904825,Hz
+Lazo de posición · análisis lineal,Fémur,margen de fase,69.99466954695828,°
+Separación de frecuencias,Fémur,corriente/velocidad,35.308066588820004,×
+Separación de frecuencias,Fémur,velocidad/posición,2.6552905877969595,×
+Saturación durante el ciclo de paso,Fémur,PWM saturado,0.0,%
+Saturación durante el ciclo de paso,Fémur,ILIMIT alcanzado,6.242857142857143,%
+Respuesta al escalón · lazo de corriente,Tibia,tr,0.007999999999999993,s
+Respuesta al escalón · lazo de corriente,Tibia,Mp,0.0,%
+Respuesta al escalón · lazo de corriente,Tibia,ts,0.013999999999999999,s
+Respuesta al escalón · lazo de corriente,Tibia,ess,2.0816681711721685e-17,A
+Lazo de corriente · análisis lineal,Tibia,ancho de banda,60.51888883070947,Hz
+Lazo de corriente · análisis lineal,Tibia,cruce,37.48754011242824,Hz
+Lazo de corriente · análisis lineal,Tibia,margen de fase,72.32340968943976,°
+Respuesta al escalón · lazo de velocidad,Tibia,tr,0.24900000000000003,s
+Respuesta al escalón · lazo de velocidad,Tibia,Mp,24.851638834118095,%
+Respuesta al escalón · lazo de velocidad,Tibia,ts,nan,s
+Respuesta al escalón · lazo de velocidad,Tibia,ess,0.02680119932073366,rad/s
+Lazo de velocidad · análisis lineal,Tibia,ancho de banda,3.440077954907718,Hz
+Lazo de velocidad · análisis lineal,Tibia,cruce,1.9410826243476769,Hz
+Lazo de velocidad · análisis lineal,Tibia,margen de fase,31.896909742087473,°
+Respuesta al escalón · lazo de posición,Tibia,tr,1.086,s
+Respuesta al escalón · lazo de posición,Tibia,Mp,0.0,%
+Respuesta al escalón · lazo de posición,Tibia,ts,1.356,s
+Respuesta al escalón · lazo de posición,Tibia,ess,0.008493606537588405,rad
+Lazo de posición · análisis lineal,Tibia,ancho de banda,0.3003577341421068,Hz
+Lazo de posición · análisis lineal,Tibia,cruce,0.29116023821736425,Hz
+Lazo de posición · análisis lineal,Tibia,margen de fase,88.70971578166314,°
+Separación de frecuencias,Tibia,corriente/velocidad,17.592301576878924,×
+Separación de frecuencias,Tibia,velocidad/posición,11.453269098374975,×
+Saturación durante el ciclo de paso,Tibia,PWM saturado,0.0,%
+Saturación durante el ciclo de paso,Tibia,ILIMIT alcanzado,0.0,%
+Simulación vs pata real,Fémur,RMSE de posición,0.09756369350454666,rad
+Simulación vs pata real,Fémur,error máximo de posición,0.45036407964583114,rad

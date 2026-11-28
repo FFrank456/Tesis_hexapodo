@@ -1,0 +1,168 @@
+% Generado por export_figures.py. Requiere \usepackage{booktabs}.
+
+\begin{table}[htbp]
+\centering
+\caption{Verificación de la cinemática inversa}
+\begin{tabular}{lrrrrr}
+\toprule
+Elemento & error máximo [m] & muestras & con solución dentro de límites & solución fuera de límites & fuera del alcance \\
+\midrule
+FK(IK(p)) & 4.93e-16 & 29791.0 & -- & -- & -- \\
+Caja cartesiana & -- & -- & 2542.0 & 8563.0 & 8893.0 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\caption{Error de posición del efector final}
+\begin{tabular}{lrrr}
+\toprule
+Elemento & RMSE [mm] & error máximo [mm] & error permanente [mm] \\
+\midrule
+Punto a punto & 3.176 & 4.778 & 4.778 \\
+Línea recta & 7.337 & 12.5 & 2.756 \\
+Círculo & 8.616 & 17.1 & 3.403 \\
+Ciclo de paso & 13.0 & 22.9 & 3.121 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\caption{Error angular máximo por articulación}
+\begin{tabular}{lrrr}
+\toprule
+Elemento & Coxa [°] & Fémur [°] & Tibia [°] \\
+\midrule
+Punto a punto & 8.208 & 20.1 & 28.1 \\
+Línea recta & 3.723 & 4.714 & 5.838 \\
+Círculo & 3.641 & 7.563 & 7.265 \\
+Ciclo de paso & 5.763 & 9.654 & 8.863 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\caption{Respuesta al escalón $\cdot$ lazo de corriente}
+\begin{tabular}{lrrrr}
+\toprule
+Elemento & tr [s] & Mp [\%] & ts [s] & ess [A] \\
+\midrule
+Coxa & 0.008 & 0.000 & 0.014 & 2.08e-17 \\
+Fémur & 0.008 & 0.000 & 0.014 & 2.08e-17 \\
+Tibia & 0.008 & 0.000 & 0.014 & 2.08e-17 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\caption{Lazo de corriente $\cdot$ análisis lineal}
+\begin{tabular}{lrrr}
+\toprule
+Elemento & ancho de banda [Hz] & cruce [Hz] & margen de fase [°] \\
+\midrule
+Coxa & 60.5 & 37.5 & 72.3 \\
+Fémur & 60.5 & 37.5 & 72.3 \\
+Tibia & 60.5 & 37.5 & 72.3 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\caption{Respuesta al escalón $\cdot$ lazo de velocidad}
+\begin{tabular}{lrrrr}
+\toprule
+Elemento & tr [s] & Mp [\%] & ts [s] & ess [rad/s] \\
+\midrule
+Coxa & 0.027 & 25.7 & -- & 0.050 \\
+Fémur & 0.023 & 17.4 & -- & 0.00684 \\
+Tibia & 0.249 & 24.9 & -- & 0.027 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\caption{Lazo de velocidad $\cdot$ análisis lineal}
+\begin{tabular}{lrrr}
+\toprule
+Elemento & ancho de banda [Hz] & cruce [Hz] & margen de fase [°] \\
+\midrule
+Coxa & 1.768 & 1.082 & 28.7 \\
+Fémur & 1.714 & 1.561 & 87.6 \\
+Tibia & 3.440 & 1.941 & 31.9 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\caption{Respuesta al escalón $\cdot$ lazo de posición}
+\begin{tabular}{lrrrr}
+\toprule
+Elemento & tr [s] & Mp [\%] & ts [s] & ess [rad] \\
+\midrule
+Coxa & 1.032 & 0.000 & 1.484 & 0.011 \\
+Fémur & 0.676 & 0.000 & 0.886 & 0.013 \\
+Tibia & 1.086 & 0.000 & 1.356 & 0.00849 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\caption{Lazo de posición $\cdot$ análisis lineal}
+\begin{tabular}{lrrr}
+\toprule
+Elemento & ancho de banda [Hz] & cruce [Hz] & margen de fase [°] \\
+\midrule
+Coxa & 0.467 & 0.392 & 86.3 \\
+Fémur & 0.646 & 0.436 & 70.0 \\
+Tibia & 0.300 & 0.291 & 88.7 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\caption{Separación de frecuencias}
+\begin{tabular}{lrr}
+\toprule
+Elemento & corriente/velocidad [×] & velocidad/posición [×] \\
+\midrule
+Coxa & 34.2 & 3.785 \\
+Fémur & 35.3 & 2.655 \\
+Tibia & 17.6 & 11.5 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\caption{Saturación durante el ciclo de paso}
+\begin{tabular}{lrr}
+\toprule
+Elemento & PWM saturado [\%] & ILIMIT alcanzado [\%] \\
+\midrule
+Coxa & 0.000 & 10.2 \\
+Fémur & 0.000 & 6.243 \\
+Tibia & 0.000 & 0.000 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\caption{Simulación vs pata real}
+\begin{tabular}{lrr}
+\toprule
+Elemento & RMSE de posición [rad] & error máximo de posición [rad] \\
+\midrule
+Fémur & 0.098 & 0.450 \\
+\bottomrule
+\end{tabular}
+\end{table}
